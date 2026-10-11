@@ -641,6 +641,34 @@ root.addEventListener('submit', async (e) => {
 });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); } });
 ['dragover', 'dragenter'].forEach((t) => root.addEventListener(t, (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
+/* Appui long sur une réaction : affiche qui l'a mise (utile sur téléphone, où le survol n'existe pas) */
+const whobox = $('#whobox');
+let press = null, pressShown = false;
+function hideWho() { whobox.hidden = true; }
+function showWho(chip) {
+  const who = (S.reacts[chip.dataset.react] || []).filter((x) => x.emoji === chip.dataset.emojiR);
+  if (!who.length) return;
+  whobox.innerHTML = `<b>${esc(chip.dataset.emojiR)} ${who.length}</b>${who.map((x) => `<span>${esc(display(member(x.member_id)))}</span>`).join('')}`;
+  whobox.hidden = false;
+  const r = chip.getBoundingClientRect(), w = whobox.offsetWidth, h = whobox.offsetHeight;
+  whobox.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+  whobox.style.top = (r.top - h - 8 < 8 ? r.bottom + 8 : r.top - h - 8) + 'px';
+  navigator.vibrate?.(15);
+}
+function cancelPress() { if (press) { clearTimeout(press.t); press = null; } }
+root.addEventListener('pointerdown', (e) => {
+  const chip = e.target.closest('.react[data-emoji-r]');
+  if (!chip) return;
+  pressShown = false;
+  press = { x: e.clientX, y: e.clientY, t: setTimeout(() => { pressShown = true; press = null; showWho(chip); }, 450) };
+});
+root.addEventListener('pointermove', (e) => { if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) cancelPress(); });
+['pointerup', 'pointercancel'].forEach((t) => root.addEventListener(t, cancelPress));
+// Après un appui long, le relâchement ne doit pas ajouter ou retirer la réaction
+root.addEventListener('click', (e) => { if (pressShown && e.target.closest('.react[data-emoji-r]')) { e.stopImmediatePropagation(); pressShown = false; } }, true);
+root.addEventListener('contextmenu', (e) => { if (e.target.closest('.react[data-emoji-r]')) e.preventDefault(); });
+document.addEventListener('pointerdown', (e) => { if (!whobox.hidden && !e.target.closest('.react[data-emoji-r]')) hideWho(); });
+addEventListener('scroll', hideWho, true);
 root.addEventListener('dragleave', (e) => { const d = e.target.closest('#drop'); if (d) d.classList.remove('over'); });
 root.addEventListener('drop', (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.remove('over'); if (e.dataTransfer.files.length && !S.uploading) addFiles(e.dataTransfer.files); } });
 
