@@ -142,6 +142,8 @@ async function loadThumbs() {
   if (['bibliotheque', 'accueil', 'poles'].includes(S.view)) render();
 }
 async function loadMessages(ch) {
+  const sig = () => JSON.stringify([S.msgs[ch], (S.msgs[ch] || []).map((m) => S.reacts[m.id])]);
+  const had = !!S.msgs[ch], before = sig();
   const { data, error } = await sb.from('messages').select('*').eq('channel', ch).order('created_at', { ascending: false }).limit(200);
   if (error) return fail(error);
   S.msgs[ch] = data.reverse();
@@ -150,7 +152,7 @@ async function loadMessages(ch) {
     const r = await sb.from('message_reactions').select('message_id, member_id, emoji').in('message_id', ids);
     if (!r.error) { ids.forEach((id) => (S.reacts[id] = [])); r.data.forEach((x) => S.reacts[x.message_id].push(x)); }
   }
-  if (S.view === 'discussion' && S.chan === ch) render();
+  if (S.view === 'discussion' && S.chan === ch && (!had || sig() !== before)) render();
 }
 function startRealtime() {
   if (S.realtime) return;
@@ -175,6 +177,77 @@ function startRealtime() {
     })
     .subscribe();
 }
+
+/* ---------- Rafraîchissement automatique ---------- */
+// Tant que l'appli est ouverte : les données sont rechargées régulièrement et au retour sur l'appli,
+// la discussion se reconnecte si le téléphone l'a coupée, et une nouvelle version du site s'installe toute seule.
+const REFRESH_MS = 30000;
+const VERSION_MS = 120000;
+const VERSION_FILES = ['index.html', 'js/app.js', 'js/data.js', 'js/config.js', 'assets/style.css'];
+let lastRefresh = 0, lastVersionCheck = 0, siteVersion = null, updateReady = false;
+// Quelqu'un est en train d'écrire ou d'envoyer : on ne redessine pas la page sous ses doigts.
+function userBusy() {
+  const a = document.activeElement;
+  if (a && a.matches('input, textarea, select') && !['msgIn', 'libQ'].includes(a.id)) return true;
+  return !!S.uploading || S.evModal?.mode === 'edit' || S.moreOpen || !!S.reactPicker || S.emojiOpen;
+}
+async function refreshData() {
+  if (!S.me || document.hidden || !navigator.onLine) return;
+  lastRefresh = Date.now();
+  const before = JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations]);
+  try { await loadAll(); } catch (e) { return; }
+  if (!S.me) return render();
+  if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
+  startRealtime();
+  // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
+  for (const ch in S.msgs) if (ch !== S.chan || S.view !== 'discussion') delete S.msgs[ch];
+  if (S.view === 'discussion') await loadMessages(S.chan);
+  const changed = before !== JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations]);
+  if (!changed || userBusy()) return;
+  if (S.evModal?.mode === 'view') {
+    const o = S.evModal.occ; const e = S.events.find((x) => x.id === o.e.id);
+    if (!e) S.evModal = null; else S.evModal = { mode: 'view', occ: { ...o, e } };
+  }
+  if (S.view === 'localisation') refreshMap(); else if (S.view !== 'discussion') render();
+}
+// Première lecture : la copie déjà chargée par le navigateur (la version qui tourne) ; ensuite : celle du serveur.
+async function fileStamp(f, first) {
+  const r = await fetch(f, first ? { cache: 'force-cache' } : { method: 'HEAD', cache: 'no-store' });
+  return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified') || '') : '';
+}
+async function checkVersion() {
+  if (document.hidden || updateReady) return;
+  lastVersionCheck = Date.now();
+  const first = siteVersion === null;
+  let v; try { v = (await Promise.all(VERSION_FILES.map((f) => fileStamp(f, first)))).join('|'); } catch (e) { return; }
+  if (!v.replace(/\|/g, '')) return;
+  if (first) { siteVersion = v; return; }
+  if (v === siteVersion) return;
+  // Nouvelle version : on remplace les fichiers gardés en mémoire par le navigateur, puis on recharge.
+  try { await Promise.all(VERSION_FILES.map((f) => fetch(f, { cache: 'reload' }))); } catch (e) { return; }
+  updateReady = true; applyUpdate();
+}
+function applyUpdate() {
+  if (!updateReady || userBusy() || $('#msgIn')?.value) return;
+  location.reload();
+}
+function wakeUp() {
+  if (document.hidden) return;
+  if (Date.now() - lastRefresh > 5000) refreshData();
+  if (Date.now() - lastVersionCheck > 15000) checkVersion();
+  applyUpdate();
+}
+document.addEventListener('visibilitychange', wakeUp);
+window.addEventListener('focus', wakeUp);
+window.addEventListener('online', wakeUp);
+window.addEventListener('pageshow', (e) => { if (e.persisted) wakeUp(); });
+setInterval(() => {
+  if (document.hidden) return;
+  if (Date.now() - lastRefresh >= REFRESH_MS) refreshData();
+  if (Date.now() - lastVersionCheck >= VERSION_MS) checkVersion();
+  applyUpdate();
+}, 5000);
+checkVersion();
 
 /* ---------- Navigation ---------- */
 const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
@@ -1104,7 +1177,7 @@ async function boot() {
   const { data } = await sb.auth.getSession();
   S.session = data.session;
   if (S.session) {
-    try { await loadAll(); } catch (e) { fail(e); }
+    try { await loadAll(); lastRefresh = Date.now(); } catch (e) { fail(e); }
     if (S.me) startRealtime();
   }
   const h = (location.hash || '').slice(1);
