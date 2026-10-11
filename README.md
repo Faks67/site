@@ -25,6 +25,11 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 2. **Fonction d'envoi des notifications** : *Edge Functions > Deploy a new function > Via Editor*, nommer la fonction `notify`, coller le contenu de `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Dans les réglages de la fonction, désactiver *Verify JWT* (la fonction vérifie elle-même que l'utilisateur est un chef connecté).
 3. **Sur chaque téléphone** : ouvrir *Discussion > Annonces* et toucher *Activer les notifications*. Sur iPhone, ajouter d'abord le site à l'écran d'accueil (Partager > Sur l'écran d'accueil) et l'ouvrir depuis l'icône.
 
+## Mise à jour 3 : autorisations et calendrier complet
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/03-autorisations-calendrier.sql` et cliquer sur *Run*.
+2. **Autorisations** : dans *Administration > Autorisations*, cocher pour chaque chef ce qu'il peut faire en plus (calendrier, bibliothèque, discussion, chefs et groupes). Seuls les administrateurs peuvent donner des autorisations ou nommer un autre administrateur.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -36,6 +41,7 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 | `assets/` | Logo et styles |
 | `supabase/schema.sql` | Tables, règles d'accès et données de départ |
 | `supabase/02-reactions-annonces.sql` | Réactions et abonnements aux notifications |
+| `supabase/03-autorisations-calendrier.sql` | Autorisations par type d'action et champs du calendrier |
 | `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
 | `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
 | `.github/workflows/keepalive.yml` | Appel automatique tous les 3 jours pour éviter la mise en veille de Supabase |
