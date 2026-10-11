@@ -56,6 +56,7 @@ export const CATS = [
 ];
 
 export const CHANNELS = [
+  { id: 'annonces', name: 'Annonces', h: "Toute l'unité", announce: true },
   { id: 'general', name: 'Général', h: "Toute l'unité" },
   { id: 'peda', name: 'Pédagogie', h: 'Pôles' },
   { id: 'formation', name: 'Formation & Relève', h: 'Pôles' },
@@ -64,3 +65,10 @@ export const CHANNELS = [
 ];
 
 export const VALUES = ['Bienveillance', 'Amour', 'Écoute', 'Service', 'Entraide', 'Spiritualité', 'Responsabilité', 'Confiance en soi'];
+
+// Réactions rapides sous les messages
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '🤲', '🙏', '✅'];
+
+// Emojis proposés dans la zone d'écriture
+export const EMOJIS = ['😀', '😁', '😂', '🥰', '😍', '😊', '😉', '😎', '🤔', '😅', '😢', '😮', '👍', '👏', '🙌', '🤲', '🙏', '💪', '👋', '✌️',
+  '❤️', '💚', '💙', '💜', '✨', '⭐', '🔥', '🎉', '✅', '❌', '⚠️', '📣', '📅', '📍', '⏰', '📎', '📸', '🏕️', '⛺', '🌙', '🕌', '📖', '🎨', '⚽', '🍰', '🎁'];
