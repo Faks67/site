@@ -226,6 +226,9 @@ table.admin td:nth-child(6){width:200px}
 /* Réactions, emojis, annonces */
 .reacts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
 .react{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:2px 9px;font-size:.85rem;line-height:1.5;display:inline-flex;gap:4px;align-items:center}
+.react{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+.whobox{position:fixed;z-index:30;max-width:min(280px,calc(100vw - 16px));background:var(--fg);color:var(--bg);border-radius:12px;padding:8px 12px;font-size:.9rem;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:2px}
+.whobox b{font-size:.85rem;opacity:.8;margin-bottom:2px}
 .react span{font-size:.75rem;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 .react.mine{background:var(--green-soft);border-color:var(--green)}
 .react.mine span{color:var(--green-ink)}
