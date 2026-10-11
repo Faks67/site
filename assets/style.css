@@ -221,3 +221,5 @@ table.admin td:nth-child(1){width:110px}
 table.admin td:nth-child(5){width:150px}
 table.admin td:nth-child(6){width:200px}
 @media (max-width:860px){.chat{grid-template-rows:auto minmax(0,1fr)}.chans{align-items:center}}
+.gauge{height:12px;border-radius:99px;background:var(--surface-2);overflow:hidden;border:1px solid var(--line)}
+.gauge span{display:block;height:100%;border-radius:99px}
