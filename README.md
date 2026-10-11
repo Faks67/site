@@ -19,6 +19,12 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 4. **Adresse du site** : *Authentication > URL Configuration*, mettre `https://faks67.github.io/site/` dans *Site URL*.
 5. **Mise en ligne** : sur GitHub, *Settings > Pages*, *Source : Deploy from a branch*, branche `main`, dossier `/ (root)`.
 
+## Mise à jour 2 : réactions et annonces avec notifications
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/02-reactions-annonces.sql` et cliquer sur *Run*.
+2. **Fonction d'envoi des notifications** : *Edge Functions > Deploy a new function > Via Editor*, nommer la fonction `notify`, coller le contenu de `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Dans les réglages de la fonction, désactiver *Verify JWT* (la fonction vérifie elle-même que l'utilisateur est un chef connecté).
+3. **Sur chaque téléphone** : ouvrir *Discussion > Annonces* et toucher *Activer les notifications*. Sur iPhone, ajouter d'abord le site à l'écran d'accueil (Partager > Sur l'écran d'accueil) et l'ouvrir depuis l'icône.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -29,6 +35,9 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 | `js/config.js` | Adresse et clé publique du projet Supabase |
 | `assets/` | Logo et styles |
 | `supabase/schema.sql` | Tables, règles d'accès et données de départ |
+| `supabase/02-reactions-annonces.sql` | Réactions et abonnements aux notifications |
+| `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
+| `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
 | `.github/workflows/keepalive.yml` | Appel automatique tous les 3 jours pour éviter la mise en veille de Supabase |
 
 ## Sécurité
