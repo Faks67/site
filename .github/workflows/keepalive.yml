@@ -1,0 +1,15 @@
+# Évite la mise en veille du projet Supabase gratuit (après 7 jours sans activité).
+name: Maintien en éveil Supabase
+on:
+  schedule:
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Appeler la base
+        run: |
+          curl -sf -X POST "https://kmwomorxkudupzkaxqgg.supabase.co/rest/v1/rpc/ping" \
+            -H "apikey: sb_publishable_IAOikairpDnCkT5gQ3coqA_fcEknQkn" \
+            -H "Content-Type: application/json" -d '{}'
