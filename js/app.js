@@ -363,6 +363,19 @@ function vChat() {
     </section></div></div>`;
 }
 
+// Espace de stockage gratuit Supabase : 1 Go. Calculé à partir de la taille des documents enregistrés.
+const STORAGE_LIMIT = 1024 * 1048576;
+function storageGauge() {
+  const used = S.docs.reduce((t, d) => t + (d.size_bytes || 0), 0);
+  const pct = Math.min(100, (used / STORAGE_LIMIT) * 100);
+  const state = pct >= 90 ? 'var(--c-red)' : pct >= 75 ? 'var(--c-yellow)' : 'var(--green)';
+  const mo = (used / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+  return `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Espace de stockage</h3><b style="font-variant-numeric:tabular-nums">${mo} Mo sur 1 Go</b></div>
+    <div class="gauge" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="Espace de stockage utilisé"><span style="width:${Math.max(pct, 0.5)}%;background:${state}"></span></div>
+    <p style="color:var(--muted);font-size:.85rem;margin-top:8px">${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % utilisés par ${S.docs.length} document${S.docs.length > 1 ? 's' : ''}.${pct >= 75 ? ' Pensez à supprimer les fichiers inutiles ou à mettre les vidéos sur YouTube.' : ''}</p></div>
+`;
+}
+
 function vAdmin() {
   if (!S.me.is_admin) return '<div class="view"><div class="empty">Page réservée aux administrateurs.</div></div>';
   const inv = (id) => S.invitations.find((i) => i.member_id === id)?.email || '';
@@ -380,6 +393,7 @@ function vAdmin() {
   return `<div class="view">
   <div><span class="eyebrow">Réservé aux administrateurs</span><h1>Administration</h1>
     <p class="lead" style="margin-top:6px">Ajoutez l'e-mail d'un chef pour lui donner accès : il pourra ensuite créer son compte depuis la page de connexion. Pour retirer un accès, effacez son e-mail ou retirez la personne.</p></div>
+  ${storageGauge()}
   <div class="card"><h3 style="margin-bottom:10px">Chefs et cheftaines</h3><div class="tablewrap"><table class="admin">
     <thead><tr><th>Titre</th><th>Prénom</th><th>Groupe</th><th>Pôle</th><th>Rôle</th><th>E-mail d'accès</th><th>Admin</th><th>Accès</th><th></th></tr></thead>
     <tbody>${S.members.map(row).join('')}</tbody></table></div></div>
