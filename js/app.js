@@ -31,6 +31,7 @@ const ICONS = {
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 10h.1a2 2 0 1 1 0 4z"/>',
   up: '<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>',
   out: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
   more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -43,7 +44,8 @@ const S = {
   view: 'accueil', poleTab: 'peda', libCat: 'all', libQ: '', upPole: '', chan: 'annonces',
   reacts: {}, reactPicker: null, emojiOpen: false, push: 'inconnu',
   uploading: '', realtime: null,
-  calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false
+  calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
+  mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -175,7 +177,7 @@ function startRealtime() {
 }
 
 /* ---------- Navigation ---------- */
-const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat']];
+const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
   const items = NAV.concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span></button>`).join('')
@@ -184,7 +186,7 @@ function navHtml() {
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
 const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['bibliotheque', 'Documents', 'lib']];
 function tabbarHtml() {
-  const more = [['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['localisation', 'Localisation', 'pin'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
@@ -241,28 +243,29 @@ function vAccueil() {
 function vOrg() {
   const top = S.members.filter((m) => m.role === 'principale');
   const mainPoles = S.poles.filter((p) => p.id !== 'support');
+  const tag = (m) => `<span class="otag" style="--k:${grp(m.group_id)?.color || 'var(--green)'}">${esc(display(m))}</span>`;
   const poleCols = mainPoles.map((p) => {
     const doy = S.members.filter((m) => m.pole_id === p.id && isDoyenne(m));
     const others = S.members.filter((m) => m.pole_id === p.id && !isDoyenne(m));
     return `<div class="col"><div class="node poleNode" style="--k:${p.color}"><div class="n">${esc(p.name)}</div>
-      <div class="r">Doyenne : ${doy.length ? doy.map((m) => esc(display(m))).join(', ') : 'à désigner'}</div>
-      <div class="r" style="margin-top:6px">${others.length ? others.map((m) => esc(display(m))).join(', ') : 'Membres à attribuer'}</div></div></div>`;
+      <div class="olbl">Doyenne</div><div class="otags">${doy.length ? doy.map(tag).join('') : '<span class="r">à désigner</span>'}</div>
+      <div class="olbl">Membres</div><div class="otags">${others.length ? others.map(tag).join('') : '<span class="r">à attribuer</span>'}</div></div></div>`;
   }).join('');
+  const ochef = (m) => `<div class="ochef" style="--k:${grp(m.group_id)?.color || 'var(--green)'}"><div class="av">${esc(initial(m))}</div><div><small>${esc(m.title)}${isDoyenne(m) ? ' · doyenne' : ''}</small><b>${esc(m.first_name)}</b><small>${esc(pole(m.pole_id)?.short_name || 'Pôle à attribuer')}</small></div></div>`;
   const grpCols = S.groups.map((g) => {
     const chefs = S.members.filter((m) => m.group_id === g.id);
-    return `<div class="col"><div class="node grp" style="--k:${g.color}"><h4>${esc(g.name)}</h4><div class="r" style="margin-bottom:8px">${g.age_range ? esc(g.age_range) : chefs.length + ' chef' + (chefs.length > 1 ? 's' : '')}</div>
-      <div style="display:flex;flex-direction:column;gap:6px">${chefs.map((m) => chefChip(m, [pole(m.pole_id)?.short_name || 'Pôle à attribuer', isDoyenne(m) ? 'doyenne' : ''].filter(Boolean).join(' · '))).join('')}</div></div></div>`;
+    return `<div class="col"><div class="node grp" style="--k:${g.color}"><h4>${esc(g.name)}</h4><div class="r">${g.age_range ? esc(g.age_range) + ' · ' : ''}${chefs.length} chef${chefs.length > 1 ? 's' : ''}</div>
+      <div class="ochefs">${chefs.map(ochef).join('') || '<span class="r">Aucun chef</span>'}</div></div></div>`;
   }).join('');
   const unassigned = S.members.filter((m) => !m.group_id && m.role !== 'principale');
-  const n = Math.max(S.groups.length, 1);
-  return `<div class="view">
+  return `<div class="view wide">
   <div><span class="eyebrow">Unité 2026/2027</span><h1>Organigramme</h1><p class="lead" style="margin-top:6px">Chaque chef et cheftaine appartient à un groupe et à un pôle. Seuls les adultes figurent ici.${can('membres') ? ' Modifiez les affectations depuis la page Administration.' : ''}</p></div>
   <div class="card org-wrap"><div class="org">
     <div class="row" style="justify-content:center">${top.map((m) => `<div class="node top"><div class="av">${esc(initial(m))}</div><div class="n" style="font-size:1.15rem">${esc(display(m))}</div><div class="r">Cheffe principale de l'unité</div></div>`).join('') || '<div class="node top"><div class="n">Cheffe principale</div><div class="r">à désigner</div></div>'}</div>
     <div class="vline"></div>
-    <div class="tier" style="--l:16.5%;--r:16.5%">${poleCols}</div>
+    <div class="otier" style="--n:${mainPoles.length}">${poleCols}</div>
     <div class="tier-label">Groupes et leurs chefs</div>
-    <div class="tier" style="--l:${50 / n}%;--r:${50 / n}%">${grpCols}</div>
+    <div class="otier" style="--n:${Math.max(S.groups.length, 1)}">${grpCols}</div>
   </div></div>
   ${unassigned.length ? `<div class="card"><h3 style="margin-bottom:8px">Sans groupe</h3><div class="members">${unassigned.map((m) => `<div style="width:220px;max-width:100%">${chefChip(m)}</div>`).join('')}</div></div>` : ''}
   </div>`;
@@ -444,7 +447,7 @@ const chip = (o, day) => {
 function dayList(list, day) {
   const items = occOn(list, day);
   return `<div class="card daypanel"><div class="row" style="justify-content:space-between"><h3>${esc(fmtLong(day, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>${can('calendrier') ? `<button class="btn small" data-evnew="${day}">+ Ajouter</button>` : ''}</div>
-    ${items.length ? `<div class="agenda">${items.map((o) => `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${o.e.location ? `<small>${esc(o.e.location)}</small>` : ''}</span></button>`).join('')}</div>` : '<p style="color:var(--muted)">Rien de prévu ce jour-là.</p>'}</div>`;
+    ${items.length ? `<div class="agenda">${items.map((o) => `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${o.e.location || o.e.address ? `<small>${esc(o.e.location || o.e.address)}</small>` : ''}</span></button>`).join('')}</div>` : '<p style="color:var(--muted)">Rien de prévu ce jour-là.</p>'}</div>`;
 }
 function vMonth() {
   const d = parseD(S.calDate), first = isoD(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -506,7 +509,9 @@ function evModal() {
       <div class="row" style="justify-content:space-between;align-items:flex-start"><div><span class="pill"><span class="dot" style="--k:${cat[2]}"></span>${cat[1]}</span><h2 id="evTitle" style="margin-top:8px">${esc(e.title)}</h2></div><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
       <p><b>${esc(occWhen(o))}</b></p>
       ${e.repeat && e.repeat !== 'none' ? `<p style="color:var(--muted)">${REPEATS[e.repeat]}${e.repeat_until ? " jusqu'au " + esc(fmtLong(e.repeat_until).toLowerCase()) : ''}</p>` : ''}
-      ${e.location ? `<p>📍 ${esc(e.location)}</p>` : ''}
+      ${grpPills(e)}
+      ${e.location || e.address ? `<p>📍 ${e.location ? `<b>${esc(e.location)}</b>` : ''}${e.location && e.address ? '<br>' : ''}${esc(e.address || '')}</p>` : ''}
+      ${hasCoords(e) ? `<div class="row">${placeLinks(e)}<button class="btn small" data-mapfocus="${e.id}">${ico('pin')} Voir sur la carte</button></div>` : ''}
       ${e.details ? `<p style="white-space:pre-wrap">${esc(e.details)}</p>` : ''}
       ${by ? `<p style="color:var(--muted);font-size:.85rem">Ajouté par ${esc(display(by))}</p>` : ''}
       ${can('calendrier') ? `<div class="row" style="justify-content:flex-end"><button class="btn danger" data-evdel="${e.id}">${e.repeat && e.repeat !== 'none' ? 'Supprimer la série' : 'Supprimer'}</button><button class="btn primary" data-evedit="${esc(o.key)}">Modifier</button></div>` : ''}
@@ -530,7 +535,12 @@ function evModal() {
       <label class="field" for="efRepeat">Répétition<select id="efRepeat">${Object.entries(REPEATS).map(([k, v]) => `<option value="${k}" ${k === (e.repeat || 'none') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field" for="efUntil" id="efUntilWrap" ${!e.repeat || e.repeat === 'none' ? 'hidden' : ''}>Jusqu'au<input id="efUntil" type="date" value="${esc(e.repeat_until || '')}"></label>
     </div>
-    <label class="field" for="efLoc">Lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia"></label>
+    <div class="field"><span>Groupes concernés</span><div class="grpchips" role="group" aria-label="Groupes concernés">${S.groups.map((g) => `<button type="button" data-evgrp="${g.id}" aria-pressed="${(e.group_ids || []).includes(g.id)}" style="--k:${g.color}"><span class="dot"></span>${esc(g.name)}</button>`).join('')}</div><small class="hint">Aucun groupe coché : l'événement concerne toute l'unité.</small></div>
+    <label class="field" for="efLoc">Nom du lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia, base de loisirs…"></label>
+    <div class="field addr"><label for="efAddr">Adresse</label>
+      <div class="addrbox"><input id="efAddr" autocomplete="off" spellcheck="false" maxlength="200" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="efAddrList" placeholder="Tapez une adresse, ex. 17 rue…" value="${esc(e.address || '')}" ${hasCoords(e) ? `data-lat="${e.lat}" data-lng="${e.lng}" data-ok="1"` : ''}>
+      <ul id="efAddrList" class="addrlist" role="listbox" hidden></ul></div>
+      <small class="hint" id="efAddrHint">${hasCoords(e) ? '✓ Adresse vérifiée' : 'Choisissez une adresse dans les suggestions (toutes les adresses de France).'}</small></div>
     <label class="field" for="efDetails">Précisions<textarea id="efDetails" maxlength="2000">${esc(e.details || '')}</textarea></label>
     <p class="err" id="efErr" role="alert" hidden></p>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-closemodal>Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div>
@@ -568,12 +578,15 @@ async function saveEvent() {
   if (!start) return err('Indiquez la date de début.');
   if (end < start) return err('La fin doit être après le début.');
   if (!allDay && end === start && v('#efEndT') && v('#efEndT') <= v('#efStartT')) return err("L'heure de fin doit être après l'heure de début.");
+  const addrOk = $('#efAddr').dataset.ok === '1' && !!v('#efAddr');
+  if (v('#efAddr') && !addrOk) return err("Choisissez l'adresse dans la liste des suggestions pour qu'elle apparaisse sur la carte.");
   const repeat = $('#efRepeat').value;
   if (repeat !== 'none' && v('#efUntil') && v('#efUntil') < start) return err('La date de fin de répétition doit être après le début.');
   const row = {
     title: v('#efTitle'), category: $('#efCat').value, date: start, end_date: end === start ? null : end, all_day: allDay,
     start_time: allDay ? null : v('#efStartT') || null, end_time: allDay ? null : v('#efEndT') || null,
-    location: v('#efLoc') || null, details: v('#efDetails') || null, repeat, repeat_until: repeat === 'none' ? null : v('#efUntil') || null
+    location: v('#efLoc') || null, group_ids: [...document.querySelectorAll('[data-evgrp][aria-pressed="true"]')].map((b) => b.dataset.evgrp),
+    address: addrOk ? v('#efAddr') : null, lat: addrOk ? Number($('#efAddr').dataset.lat) : null, lng: addrOk ? Number($('#efAddr').dataset.lng) : null, details: v('#efDetails') || null, repeat, repeat_until: repeat === 'none' ? null : v('#efUntil') || null
   };
   const id = S.evModal.ev.id;
   const r = id ? await sb.from('events').update(row).eq('id', id).select().single() : await sb.from('events').insert({ ...row, created_by: S.me.id }).select().single();
@@ -736,6 +749,152 @@ function vAdmin() {
   </div>`;
 }
 
+/* ---------- Adresses (Base Adresse Nationale) et carte des activités ---------- */
+const hasCoords = (e) => e && e.lat != null && e.lng != null;
+const evGroups = (e) => (e.group_ids || []).map(grp).filter(Boolean);
+const grpPills = (e) => { const gs = evGroups(e); return `<div class="row" style="gap:6px">${gs.length ? gs.map((g) => `<span class="pill"><span class="dot" style="--k:${g.color}"></span>${esc(g.name)}</span>`).join('') : '<span class="pill"><span class="dot"></span>Toute l\'unité</span>'}</div>`; };
+const placeLinks = (e) => `<a class="btn small" href="https://waze.com/ul?ll=${e.lat},${e.lng}&navigate=yes" target="_blank" rel="noopener">Waze</a><a class="btn small" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}" target="_blank" rel="noopener">Google Maps</a>`;
+
+// Service public et gratuit de l'IGN : toutes les adresses de France, sans clé
+const GEOCODER = 'https://data.geopf.fr/geocodage/search';
+let addrTimer = null, addrCtrl = null, addrItems = [], addrActive = -1;
+function addrInput(inp) {
+  delete inp.dataset.ok; delete inp.dataset.lat; delete inp.dataset.lng;
+  $('#efAddrHint').textContent = 'Choisissez une adresse dans les suggestions (toutes les adresses de France).';
+  clearTimeout(addrTimer);
+  const q = inp.value.trim();
+  if (q.length < 3) return addrClose();
+  addrTimer = setTimeout(async () => {
+    addrCtrl?.abort(); addrCtrl = new AbortController();
+    try {
+      // Priorité aux adresses proches de l'Île-de-France, sans exclure le reste du pays
+      const r = await fetch(`${GEOCODER}?q=${encodeURIComponent(q)}&autocomplete=1&limit=7&lat=48.85&lon=2.35`, { signal: addrCtrl.signal });
+      const j = await r.json();
+      addrItems = (j.features || []).map((f) => ({ label: f.properties.label, ctx: f.properties.context, type: f.properties.type, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }));
+      addrShow();
+    } catch (e) { if (e.name !== 'AbortError') { addrItems = []; addrShow('Recherche d\'adresse indisponible pour le moment.'); } }
+  }, 180);
+}
+function addrShow(msg) {
+  const ul = $('#efAddrList'); if (!ul) return;
+  addrActive = -1;
+  ul.innerHTML = addrItems.length ? addrItems.map((a, i) => `<li role="option" id="addr-${i}" data-addr="${i}"><b>${esc(a.label)}</b><small>${esc(a.ctx || '')}</small></li>`).join('') : `<li class="none">${esc(msg || 'Aucune adresse trouvée. Vérifiez l\'orthographe ou ajoutez la ville.')}</li>`;
+  ul.hidden = false; $('#efAddr').setAttribute('aria-expanded', 'true');
+}
+function addrClose() { const ul = $('#efAddrList'); if (ul) ul.hidden = true; $('#efAddr')?.setAttribute('aria-expanded', 'false'); addrActive = -1; }
+function addrPick(i) {
+  const a = addrItems[i], inp = $('#efAddr'); if (!a || !inp) return;
+  inp.value = a.label; inp.dataset.lat = a.lat; inp.dataset.lng = a.lng; inp.dataset.ok = '1';
+  $('#efAddrHint').textContent = '✓ Adresse vérifiée'; addrClose();
+}
+function addrKey(e) {
+  const ul = $('#efAddrList'); if (!ul || ul.hidden || !addrItems.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); addrActive = (addrActive + (e.key === 'ArrowDown' ? 1 : -1) + addrItems.length) % addrItems.length;
+    ul.querySelectorAll('li').forEach((li, i) => li.setAttribute('aria-selected', i === addrActive));
+    $('#efAddr').setAttribute('aria-activedescendant', 'addr-' + addrActive);
+  } else if (e.key === 'Enter') { e.preventDefault(); addrPick(Math.max(addrActive, 0)); }
+  else if (e.key === 'Escape') { e.stopPropagation(); addrClose(); }
+}
+
+// Carte : MapLibre (libre) + fonds de carte OpenFreeMap (gratuits, sans clé), chargés seulement sur cet onglet
+const MAP_JS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js';
+const MAP_CSS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css';
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const IDF = { center: [2.35, 48.78], zoom: 8.7 };
+const PERIODS = [[30, '30 prochains jours'], [90, '3 prochains mois'], [365, '12 prochains mois']];
+let mapLib = null, mapInst = null, mapMarkers = [];
+function loadMapLib() {
+  if (!mapLib) mapLib = new Promise((ok, ko) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = MAP_CSS; document.head.append(l);
+    const sc = document.createElement('script'); sc.src = MAP_JS; sc.onload = () => ok(window.maplibregl); sc.onerror = () => { mapLib = null; ko(new Error('carte indisponible')); }; document.head.append(sc);
+  });
+  return mapLib;
+}
+// Une ligne par activité : la prochaine date des événements qui se répètent
+function mapItems() {
+  const from = today(), to = addDays(from, S.mapPeriod);
+  const seen = new Set(), out = [];
+  for (const o of occurrences(from, to)) {
+    if (!hasCoords(o.e) || seen.has(o.e.id)) continue;
+    const gs = o.e.group_ids || [];
+    if (S.mapGroups.length && gs.length && !gs.some((g) => S.mapGroups.includes(g))) continue;
+    seen.add(o.e.id); out.push(o);
+  }
+  return out;
+}
+const pinColor = (e) => { const gs = evGroups(e); return gs.length === 1 ? gs[0].color : gs.length ? `conic-gradient(${gs.map((g, i) => `${g.color} ${(i / gs.length) * 360}deg ${((i + 1) / gs.length) * 360}deg`).join(',')})` : 'var(--green)'; };
+const shortWhen = (o) => `${cap(parseD(o.start).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }))}${isTimed(o) ? ' · ' + fmtHM(o.e.start_time) : ''}`;
+function mapListHtml(items) {
+  if (!items.length) return `<div class="empty">Aucune activité avec une adresse sur cette période.${can('calendrier') ? ' Ajoutez une adresse à un événement depuis le Calendrier.' : ''}</div>`;
+  return items.map((o) => `<button class="mapitem" data-mapgo="${o.e.id}"><span class="mpin" style="--pin:${pinColor(o.e)}"></span><span><small>${esc(shortWhen(o))}</small><b>${esc(o.e.title)}</b><small>${esc(o.e.location ? o.e.location + ' · ' : '')}${esc(o.e.address)}</small></span></button>`).join('');
+}
+function popupHtml(list) {
+  return list.map((o) => `<div class="mpop"><small>${esc(shortWhen(o))}</small><b>${esc(o.e.title)}</b>${grpPills(o.e)}<small>${esc(o.e.location ? o.e.location + ' · ' : '')}${esc(o.e.address)}</small></div>`).join('<hr>')
+    + `<div class="row" style="gap:6px;margin-top:8px">${placeLinks(list[0].e)}</div>`;
+}
+function vMap() {
+  return `<div class="view wide">
+  <div><span class="eyebrow">Prochaines activités</span><h1>Localisation</h1></div>
+  <div class="maplayout">
+    <aside class="card mapside">
+      <div class="field"><span>Groupes</span><div class="grpchips" role="group" aria-label="Filtrer par groupe">
+        <button type="button" data-mapgrp="" aria-pressed="${!S.mapGroups.length}"><span class="dot"></span>Tous</button>
+        ${S.groups.map((g) => `<button type="button" data-mapgrp="${g.id}" aria-pressed="${S.mapGroups.includes(g.id)}" style="--k:${g.color}"><span class="dot"></span>${esc(g.name)}</button>`).join('')}</div></div>
+      <label class="field" for="mapPeriod">Période<select id="mapPeriod">${PERIODS.map(([d, l]) => `<option value="${d}" ${d === S.mapPeriod ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <div class="maplist" id="mapList">${mapListHtml(mapItems())}</div>
+    </aside>
+    <div class="mapbox card"><div id="map" role="region" aria-label="Carte des activités"></div>
+      <div class="maptools"><button class="btn small" data-mapidf>Île-de-France</button><button class="btn small" data-mapfr>France entière</button></div>
+      <div class="maploading" id="mapLoading">Chargement de la carte…</div></div>
+  </div></div>`;
+}
+async function initMap() {
+  const el = $('#map'); if (!el) return;
+  let ml; try { ml = await loadMapLib(); } catch (e) { $('#mapLoading').textContent = 'La carte ne peut pas être chargée. Vérifiez la connexion internet.'; return; }
+  if (!el.isConnected) return;
+  mapInst?.remove();
+  const st = S.mapState || IDF;
+  mapInst = new ml.Map({ container: el, style: MAP_STYLE, center: st.center, zoom: st.zoom, attributionControl: { compact: true }, cooperativeGestures: false, maxPitch: 0, dragRotate: false });
+  mapInst.touchZoomRotate.disableRotation();
+  mapInst.addControl(new ml.NavigationControl({ showCompass: false }), 'top-right');
+  mapInst.addControl(new ml.GeolocateControl({ positionOptions: { enableHighAccuracy: true } }), 'top-right');
+  mapInst.addControl(new ml.FullscreenControl(), 'top-right');
+  mapInst.addControl(new ml.ScaleControl({ unit: 'metric' }), 'bottom-left');
+  mapInst.on('load', () => $('#mapLoading')?.remove());
+  mapInst.on('moveend', () => { if (mapInst) S.mapState = { center: mapInst.getCenter().toArray(), zoom: mapInst.getZoom() }; });
+  drawMarkers();
+  if (S.mapFocus) { const id = S.mapFocus; S.mapFocus = null; focusOnMap(id); }
+}
+function drawMarkers() {
+  if (!mapInst || !window.maplibregl) return;
+  mapMarkers.forEach((m) => m.remove()); mapMarkers = [];
+  // Activités au même endroit : un seul repère
+  const spots = new Map();
+  for (const o of mapItems()) { const k = o.e.lat.toFixed(5) + ',' + o.e.lng.toFixed(5); (spots.get(k) || spots.set(k, []).get(k)).push(o); }
+  for (const list of spots.values()) {
+    const e = list[0].e, el = document.createElement('button');
+    el.className = 'mappin'; el.type = 'button'; el.style.setProperty('--pin', pinColor(e));
+    el.setAttribute('aria-label', list.map((o) => o.e.title).join(', '));
+    el.innerHTML = `<span><i>${list.length > 1 ? list.length : esc(initial({ first_name: e.title }))}</i></span>`;
+    const popup = new maplibregl.Popup({ offset: 30, maxWidth: '300px', closeButton: true }).setHTML(popupHtml(list));
+    const mk = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([e.lng, e.lat]).setPopup(popup).addTo(mapInst);
+    mk._ids = list.map((o) => o.e.id); mapMarkers.push(mk);
+  }
+}
+function refreshMap() {
+  const l = $('#mapList'); if (l) l.innerHTML = mapListHtml(mapItems());
+  document.querySelectorAll('[data-mapgrp]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.mapgrp ? S.mapGroups.includes(b.dataset.mapgrp) : !S.mapGroups.length));
+  drawMarkers();
+}
+function focusOnMap(id) {
+  const mk = mapMarkers.find((m) => m._ids.includes(id)); if (!mk || !mapInst) return;
+  mapMarkers.forEach((m) => m.getPopup()?.isOpen() && m.togglePopup());
+  mapInst.flyTo({ center: mk.getLngLat(), zoom: Math.max(mapInst.getZoom(), 14), speed: 1.4 });
+  mk.togglePopup();
+  if (matchMedia('(max-width:860px)').matches) $('#map')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 /* ---------- Rendu ---------- */
 function render() {
   if (!S.session) { root.innerHTML = vAuth(); return; }
@@ -744,7 +903,7 @@ function render() {
     root.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="assets/logo.png" alt=""><h2>Accès en attente</h2></div><p>Votre compte (${esc(S.session.user.email)}) n'est relié à aucun chef ou cheftaine. Demandez à un administrateur d'ajouter cette adresse dans la page Administration, puis reconnectez-vous.</p><button class="btn block" data-logout>Se déconnecter</button></div></div>`;
     return;
   }
-  const V = { accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
+  const V = { localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
   root.innerHTML = `<div class="app"><aside class="side">
@@ -753,6 +912,7 @@ function render() {
     <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button></div>
   </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${S.view === 'calendrier' ? evModal() : ''}</div>`;
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
+  if (S.view === 'localisation') initMap(); else if (mapInst) { mapInst.remove(); mapInst = null; mapMarkers = []; }
   const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (draft && $('#msgIn')) $('#msgIn').value = draft;
@@ -767,6 +927,14 @@ root.addEventListener('click', async (e) => {
   const nv = t.closest('button[data-v]'); if (nv) return go(nv.dataset.v);
   if (t.closest('[data-more]')) { S.moreOpen = !S.moreOpen; return render(); }
   if (t.matches('[data-closemore]')) { S.moreOpen = false; return render(); }
+  // Carte et adresses
+  const ad = t.closest('[data-addr]'); if (ad) return addrPick(Number(ad.dataset.addr));
+  const eg = t.closest('[data-evgrp]'); if (eg) { eg.setAttribute('aria-pressed', eg.getAttribute('aria-pressed') !== 'true'); return; }
+  const mg = t.closest('[data-mapgrp]'); if (mg) { const id = mg.dataset.mapgrp; S.mapGroups = !id ? [] : S.mapGroups.includes(id) ? S.mapGroups.filter((x) => x !== id) : [...S.mapGroups, id]; return refreshMap(); }
+  const mgo = t.closest('[data-mapgo]'); if (mgo) return focusOnMap(mgo.dataset.mapgo);
+  const mf = t.closest('[data-mapfocus]'); if (mf) { S.mapFocus = mf.dataset.mapfocus; const e = S.events.find((x) => String(x.id) === mf.dataset.mapfocus); if (e) S.mapState = { center: [e.lng, e.lat], zoom: 14 }; return go('localisation'); }
+  if (t.closest('[data-mapidf]')) return mapInst?.flyTo({ ...IDF, speed: 1.6 });
+  if (t.closest('[data-mapfr]')) return mapInst?.fitBounds([[-5.2, 41.3], [9.6, 51.1]], { padding: 30 });
   // Calendrier
   if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { S.evModal = null; return render(); }
   const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
@@ -864,7 +1032,10 @@ root.addEventListener('change', (e) => {
   if (e.target.id === 'efRepeat') $('#efUntilWrap').hidden = e.target.value === 'none';
   if (e.target.id === 'efStart' && ($('#efEnd').value < e.target.value || !$('#efEnd').value)) $('#efEnd').value = e.target.value;
   if (e.target.dataset.perm) savePerm(e.target);
+  if (e.target.id === 'mapPeriod') { S.mapPeriod = Number(e.target.value); refreshMap(); }
 });
+root.addEventListener('input', (e) => { if (e.target.id === 'efAddr') addrInput(e.target); });
+root.addEventListener('focusout', (e) => { if (e.target.id === 'efAddr') setTimeout(addrClose, 150); });
 root.addEventListener('input', (e) => { if (e.target.id === 'libQ') { S.libQ = e.target.value; render(); } });
 root.addEventListener('submit', async (e) => {
   const id = e.target.id;
@@ -893,6 +1064,7 @@ root.addEventListener('submit', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen)) { S.evModal = null; S.moreOpen = false; render(); } });
+root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(e); }, true);
 root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); } });
 ['dragover', 'dragenter'].forEach((t) => root.addEventListener(t, (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
 /* Appui long sur une réaction : affiche qui l'a mise (utile sur téléphone, où le survol n'existe pas) */
