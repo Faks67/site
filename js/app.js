@@ -184,9 +184,9 @@ function navHtml() {
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
-const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['bibliotheque', 'Documents', 'lib']];
+const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['localisation', 'Localisation', 'pin']];
 function tabbarHtml() {
-  const more = [['localisation', 'Localisation', 'pin'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
