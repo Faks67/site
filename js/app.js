@@ -1,6 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
-import { POLE_CONTENT, CATS, CHANNELS, VALUES } from './data.js';
+import { POLE_CONTENT, CATS, CHANNELS, VALUES, QUICK_REACTIONS, EMOJIS } from './data.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -33,7 +33,8 @@ const S = {
   session: null, me: null,
   members: [], groups: [], poles: [], docs: [], events: [], invitations: [],
   msgs: {}, thumbs: {},
-  view: 'accueil', poleTab: 'peda', libCat: 'all', libQ: '', upPole: '', chan: 'general',
+  view: 'accueil', poleTab: 'peda', libCat: 'all', libQ: '', upPole: '', chan: 'annonces',
+  reacts: {}, reactPicker: null, emojiOpen: false, push: 'inconnu',
   uploading: '', realtime: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
@@ -125,6 +126,11 @@ async function loadMessages(ch) {
   const { data, error } = await sb.from('messages').select('*').eq('channel', ch).order('created_at', { ascending: false }).limit(200);
   if (error) return fail(error);
   S.msgs[ch] = data.reverse();
+  const ids = data.map((m) => m.id);
+  if (ids.length) {
+    const r = await sb.from('message_reactions').select('message_id, member_id, emoji').in('message_id', ids);
+    if (!r.error) { ids.forEach((id) => (S.reacts[id] = [])); r.data.forEach((x) => S.reacts[x.message_id].push(x)); }
+  }
   if (S.view === 'discussion' && S.chan === ch) render();
 }
 function startRealtime() {
@@ -137,6 +143,15 @@ function startRealtime() {
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
       for (const ch in S.msgs) S.msgs[ch] = S.msgs[ch].filter((x) => x.id !== old.id);
+      if (S.view === 'discussion') render();
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, ({ new: x }) => {
+      const l = S.reacts[x.message_id] || (S.reacts[x.message_id] = []);
+      if (!l.some((y) => y.member_id === x.member_id && y.emoji === x.emoji)) l.push(x);
+      if (S.view === 'discussion') render();
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions' }, ({ old: x }) => {
+      if (S.reacts[x.message_id]) S.reacts[x.message_id] = S.reacts[x.message_id].filter((y) => !(y.member_id === x.member_id && y.emoji === x.emoji));
       if (S.view === 'discussion') render();
     })
     .subscribe();
@@ -346,21 +361,100 @@ function vCal() {
   </div>`;
 }
 
+function reactionsHtml(m) {
+  const list = S.reacts[m.id] || [];
+  const groups = {};
+  list.forEach((x) => { (groups[x.emoji] = groups[x.emoji] || []).push(x.member_id); });
+  const chips = Object.entries(groups).map(([e, who]) => {
+    const mine = who.includes(S.me.id);
+    const names = who.map((id) => display(member(id))).join(', ');
+    return `<button class="react${mine ? ' mine' : ''}" data-react="${m.id}" data-emoji-r="${esc(e)}" title="${esc(names)}" aria-label="${esc(e)} ${who.length}, ${esc(names)}">${esc(e)} <span>${who.length}</span></button>`;
+  }).join('');
+  const picker = S.reactPicker === m.id ? `<span class="quick">${QUICK_REACTIONS.map((e) => `<button data-react="${m.id}" data-emoji-r="${e}" aria-label="Réagir ${e}">${e}</button>`).join('')}</span>` : '';
+  return `<div class="reacts">${chips}<button class="react add" data-reactpick="${m.id}" aria-label="Ajouter une réaction" aria-expanded="${S.reactPicker === m.id}">${S.reactPicker === m.id ? '×' : '☺︎+'}</button>${picker}</div>`;
+}
+function pushBanner() {
+  const st = S.push;
+  if (st === 'actif') return `<div class="pushbar ok">🔔 Notifications activées sur cet appareil. <button class="linkbtn" data-push="off">Désactiver</button></div>`;
+  if (st === 'non-supporte') return `<div class="pushbar">${isIOS() && !isStandalone() ? 'Sur iPhone, ajoutez d\'abord le site à l\'écran d\'accueil (bouton Partager, puis « Sur l\'écran d\'accueil »), ouvrez-le depuis l\'icône, puis activez les notifications ici.' : 'Ce navigateur ne permet pas les notifications. Essayez avec Chrome, Firefox, Edge ou Safari récent.'}</div>`;
+  if (st === 'refuse') return `<div class="pushbar">Les notifications sont bloquées pour ce site. Autorisez-les dans les réglages du navigateur, puis rechargez la page.</div>`;
+  return `<div class="pushbar"><span>Recevez chaque annonce directement sur votre téléphone.</span><button class="btn small primary" data-push="on">🔔 Activer les notifications</button></div>`;
+}
 function vChat() {
-  const c = CHANNELS.find((x) => x.id === S.chan); let lastH = '';
-  const chans = CHANNELS.map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="h">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button data-chan="${x.id}" aria-current="${x.id === S.chan}"># ${esc(x.name)}</button>`; }).join('');
+  const c = CHANNELS.find((x) => x.id === S.chan) || CHANNELS[0]; let lastH = '';
+  const chans = CHANNELS.map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="h">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button data-chan="${x.id}" aria-current="${x.id === S.chan}">${x.announce ? '📣' : '#'} ${esc(x.name)}</button>`; }).join('');
   const list = S.msgs[S.chan];
   return `<div class="view">
   <div><span class="eyebrow">Entre chefs et cheftaines</span><h1>Discussion</h1></div>
   <div class="card chat"><nav class="chans" aria-label="Fils de discussion">${chans}</nav>
-    <section class="thread"><header><b># ${esc(c.name)}</b></header>
+    <section class="thread"><header><b>${c.announce ? '📣' : '#'} ${esc(c.name)}</b>${c.announce ? '<div style="color:var(--muted);font-size:.82rem">Chaque message ici envoie une notification à tous les chefs et cheftaines.</div>' : ''}</header>
+      ${c.announce ? pushBanner() : ''}
       <div class="msgs" id="msgs">${!list ? '<p style="color:var(--muted)">Chargement…</p>' : list.length ? list.map((m) => {
         const a = member(m.member_id); const k = grp(a?.group_id)?.color || 'var(--muted)';
         const canDel = S.me.is_admin || m.member_id === S.me.id;
-        return `<div class="msg" style="--k:${k}"><div class="av">${esc(initial(a))}</div><div class="b"><div class="h"><b>${esc(display(a))}</b>${esc(fmtTime(m.created_at))}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div><p>${esc(m.body)}</p></div></div>`;
-      }).join('') : '<p style="color:var(--muted)">Aucun message pour l\'instant. Écrivez le premier !</p>'}</div>
-      <form class="compose" id="compose"><textarea id="msgIn" placeholder="Écrire dans # ${esc(c.name)}" aria-label="Message" maxlength="4000"></textarea><button class="btn primary" type="submit">Envoyer</button></form>
+        return `<div class="msg" style="--k:${k}"><div class="av">${esc(initial(a))}</div><div class="b"><div class="h"><b>${esc(display(a))}</b>${esc(fmtTime(m.created_at))}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div><p>${esc(m.body)}</p>${reactionsHtml(m)}</div></div>`;
+      }).join('') : `<p style="color:var(--muted)">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`}</div>
+      ${S.emojiOpen ? `<div class="emojis" role="group" aria-label="Emojis">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>` : ''}
+      <form class="compose" id="compose"><button type="button" class="btn emojibtn" data-emojitoggle aria-label="Emojis" aria-expanded="${S.emojiOpen}">😊</button><textarea id="msgIn" placeholder="${c.announce ? 'Écrire une annonce pour toute l\'unité' : 'Écrire dans # ' + esc(c.name)}" aria-label="Message" maxlength="4000"></textarea><button class="btn primary" type="submit">${c.announce ? 'Publier' : 'Envoyer'}</button></form>
     </section></div></div>`;
+}
+
+/* ---------- Notifications sur téléphone (Web Push) ---------- */
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64ToBytes(b64) {
+  const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+async function swReg() { return navigator.serviceWorker.register('sw.js'); }
+async function checkPush() {
+  if (!pushSupported()) { S.push = 'non-supporte'; return; }
+  if (Notification.permission === 'denied') { S.push = 'refuse'; return; }
+  try {
+    const reg = await swReg(); const sub = await reg.pushManager.getSubscription();
+    S.push = sub && Notification.permission === 'granted' ? 'actif' : 'inactif';
+  } catch (e) { S.push = 'inactif'; }
+}
+async function enablePush() {
+  if (!pushSupported()) { S.push = 'non-supporte'; return render(); }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { S.push = perm === 'denied' ? 'refuse' : 'inactif'; return render(); }
+    const reg = await swReg(); await navigator.serviceWorker.ready;
+    const k = await sb.functions.invoke('notify', { body: { action: 'key' } });
+    if (k.error || !k.data?.publicKey) throw new Error("le service de notifications n'est pas encore installé");
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.data.publicKey) });
+    const j = sub.toJSON();
+    await sb.from('push_subscriptions').delete().eq('endpoint', j.endpoint);
+    const r = await sb.from('push_subscriptions').insert({ endpoint: j.endpoint, member_id: S.me.id, p256dh: j.keys.p256dh, auth: j.keys.auth });
+    if (r.error) throw r.error;
+    S.push = 'actif'; toast('Notifications activées');
+  } catch (e) { fail(e); }
+  render();
+}
+async function disablePush() {
+  try {
+    const reg = await swReg(); const sub = await reg.pushManager.getSubscription();
+    if (sub) { await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
+    S.push = 'inactif'; toast('Notifications désactivées');
+  } catch (e) { fail(e); }
+  render();
+}
+async function toggleReaction(id, emoji) {
+  const l = S.reacts[id] || (S.reacts[id] = []);
+  const mine = l.find((x) => x.member_id === S.me.id && x.emoji === emoji);
+  S.reactPicker = null;
+  if (mine) {
+    S.reacts[id] = l.filter((x) => x !== mine); render();
+    const r = await sb.from('message_reactions').delete().match({ message_id: id, member_id: S.me.id, emoji });
+    if (r.error) { l.push(mine); fail(r.error); render(); }
+  } else {
+    const x = { message_id: id, member_id: S.me.id, emoji }; l.push(x); render();
+    const r = await sb.from('message_reactions').insert(x);
+    if (r.error && r.error.code !== '23505') { S.reacts[id] = S.reacts[id].filter((y) => y !== x); fail(r.error); render(); }
+  }
 }
 
 // Espace de stockage gratuit Supabase : 1 Go. Calculé à partir de la taille des documents enregistrés.
@@ -421,6 +515,7 @@ function render() {
   }
   const V = { accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
+  const draft = $('#msgIn')?.value;
   root.innerHTML = `<div class="app"><aside class="side">
     <div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
@@ -428,7 +523,8 @@ function render() {
   </aside><main id="main">${(V[S.view] || vAccueil)()}</main></div>`;
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
-  if (active === 'msgIn') $('#msgIn')?.focus();
+  if (draft && $('#msgIn')) $('#msgIn').value = draft;
+  if (active === 'msgIn') { const i = $('#msgIn'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
 }
 
 /* ---------- Événements ---------- */
@@ -440,8 +536,16 @@ root.addEventListener('click', async (e) => {
   const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
-  const ch = t.closest('[data-chan]'); if (ch) { S.chan = ch.dataset.chan; if (!S.msgs[S.chan]) loadMessages(S.chan); return render(); }
+  const ch = t.closest('[data-chan]'); if (ch) { S.chan = ch.dataset.chan; S.emojiOpen = false; S.reactPicker = null; if (!S.msgs[S.chan]) loadMessages(S.chan); return render(); }
   const o = t.closest('[data-open]'); if (o) return openDoc(o.dataset.open);
+  const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
+  const rp = t.closest('[data-reactpick]'); if (rp) { const id = Number(rp.dataset.reactpick); S.reactPicker = S.reactPicker === id ? null : id; return render(); }
+  if (t.closest('[data-emojitoggle]')) { S.emojiOpen = !S.emojiOpen; render(); $('#msgIn')?.focus(); return; }
+  const em = t.closest('[data-emoji]'); if (em) {
+    const i = $('#msgIn'); const a = i.selectionStart ?? i.value.length, b = i.selectionEnd ?? a;
+    i.value = i.value.slice(0, a) + em.dataset.emoji + i.value.slice(b); i.focus(); const p = a + em.dataset.emoji.length; i.setSelectionRange(p, p); return;
+  }
+  const pu = t.closest('[data-push]'); if (pu) return pu.dataset.push === 'on' ? enablePush() : disablePush();
   const dd = t.closest('[data-deldoc]'); if (dd) return confirmThen(dd, 'Confirmer la suppression', async () => {
     const d = S.docs.find((x) => x.id === dd.dataset.deldoc);
     const r = await sb.from('documents').delete().eq('id', d.id); if (r.error) return fail(r.error);
@@ -512,7 +616,12 @@ root.addEventListener('submit', async (e) => {
     const r = await sb.from('messages').insert({ channel: S.chan, member_id: S.me.id, body: v }).select().single();
     if (r.error) { $('#msgIn').value = v; return fail(r.error); }
     const list = S.msgs[S.chan] || (S.msgs[S.chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
-    render(); $('#msgIn')?.focus();
+    S.emojiOpen = false; render(); $('#msgIn')?.focus();
+    if (S.chan === 'annonces') {
+      const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
+      if (n.error) toast("Annonce publiée, mais les notifications n'ont pas pu être envoyées");
+      else toast(`Annonce publiée et envoyée à ${n.data.sent} appareil${n.data.sent > 1 ? 's' : ''}`);
+    }
   }
   if (id === 'eventForm') {
     e.preventDefault();
@@ -543,7 +652,10 @@ async function boot() {
     try { await loadAll(); } catch (e) { fail(e); }
     if (S.me) startRealtime();
   }
-  const h = (location.hash || '').slice(1); if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration'].includes(h)) S.view = h;
+  const h = (location.hash || '').slice(1);
+  if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
+  else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration'].includes(h)) S.view = h;
+  if (S.me) checkPush().then(() => { if (S.view === 'discussion') render(); });
   if (S.view === 'discussion' && S.me) loadMessages(S.chan);
   render();
 }
@@ -553,5 +665,8 @@ sb.auth.onAuthStateChange((event, session) => {
   S.session = session;
   if (event === 'SIGNED_OUT') { S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
   if (changed && session) setTimeout(boot, 0);
+});
+window.addEventListener('hashchange', () => {
+  if (location.hash === '#annonces' && S.me) { S.view = 'discussion'; S.chan = 'annonces'; loadMessages('annonces'); render(); }
 });
 boot();

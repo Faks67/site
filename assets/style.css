@@ -223,3 +223,20 @@ table.admin td:nth-child(6){width:200px}
 @media (max-width:860px){.chat{grid-template-rows:auto minmax(0,1fr)}.chans{align-items:center}}
 .gauge{height:12px;border-radius:99px;background:var(--surface-2);overflow:hidden;border:1px solid var(--line)}
 .gauge span{display:block;height:100%;border-radius:99px}
+/* Réactions, emojis, annonces */
+.reacts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
+.react{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:2px 9px;font-size:.85rem;line-height:1.5;display:inline-flex;gap:4px;align-items:center}
+.react span{font-size:.75rem;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.react.mine{background:var(--green-soft);border-color:var(--green)}
+.react.mine span{color:var(--green-ink)}
+.react.add{color:var(--muted);font-size:.8rem;opacity:.75}
+.msg:hover .react.add,.react.add:focus-visible,.react.add[aria-expanded="true"]{opacity:1}
+.quick{display:inline-flex;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:2px 6px;box-shadow:var(--shadow)}
+.quick button{background:none;border:0;font-size:1.15rem;padding:2px 4px;border-radius:8px}
+.quick button:hover{background:var(--surface-2)}
+.emojis{display:grid;grid-template-columns:repeat(auto-fill,minmax(38px,1fr));gap:2px;padding:8px 12px;border-top:1px solid var(--line);max-height:150px;overflow:auto;background:var(--surface-2)}
+.emojis button{background:none;border:0;font-size:1.3rem;padding:4px;border-radius:8px}
+.emojis button:hover{background:var(--surface)}
+.compose .emojibtn{padding:8px 10px;font-size:1.15rem}
+.pushbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:.88rem;color:var(--muted)}
+.pushbar.ok{color:var(--green-ink)}
