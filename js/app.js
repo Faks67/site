@@ -10,7 +10,13 @@ const root = $('#root');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d) => new Date(d.length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 const fmtTime = (d) => new Date(d).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-const today = () => new Date().toISOString().slice(0, 10);
+const pad2 = (n) => String(n).padStart(2, '0');
+const isoD = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const parseD = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate() + n); return isoD(d); };
+const dayDiff = (a, b) => Math.round((parseD(b) - parseD(a)) / 864e5);
+const startOfWeek = (s) => addDays(s, -((parseD(s).getDay() + 6) % 7));
+const today = () => isoD(new Date());
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2600); }
 function fail(e) { console.error(e); toast(e?.message ? 'Erreur : ' + e.message : 'Une erreur est survenue'); }
 
@@ -24,7 +30,8 @@ const ICONS = {
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 10h.1a2 2 0 1 1 0 4z"/>',
   up: '<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>',
-  out: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>'
+  out: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
+  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -35,7 +42,8 @@ const S = {
   msgs: {}, thumbs: {},
   view: 'accueil', poleTab: 'peda', libCat: 'all', libQ: '', upPole: '', chan: 'annonces',
   reacts: {}, reactPicker: null, emojiOpen: false, push: 'inconnu',
-  uploading: '', realtime: null
+  uploading: '', realtime: null,
+  calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -43,6 +51,15 @@ const pole = (id) => S.poles.find((p) => p.id === id);
 const display = (m) => (m ? `${m.title} ${m.first_name}` : 'Ancien membre');
 const initial = (m) => (m ? m.first_name.charAt(0).toUpperCase() : '?');
 const isDoyenne = (m) => m.role === 'doyenne' || (m.role === 'principale' && m.pole_id);
+// Autorisations que l'administrateur peut donner, action par action
+const PERMS = [
+  ['calendrier', 'Calendrier', 'Ajouter, modifier et supprimer les événements'],
+  ['bibliotheque', 'Bibliothèque', "Supprimer n'importe quel document"],
+  ['discussion', 'Discussion', "Supprimer n'importe quel message"],
+  ['membres', 'Chefs et groupes', "Ajouter et modifier les chefs, leurs e-mails d'accès et les groupes"]
+];
+const can = (p) => !!S.me && (S.me.is_admin || (S.me.permissions || []).includes(p));
+const canAdminPage = () => can('membres');
 const ROLES = { principale: 'Cheffe principale', doyenne: 'Doyenne', chef: 'Chef / cheftaine', stagiaire: 'Stagiaire' };
 
 /* ---------- Connexion ---------- */
@@ -110,7 +127,7 @@ async function loadAll() {
   for (const r of [m, g, p, d, ev]) if (r.error) throw r.error;
   S.members = m.data; S.groups = g.data; S.poles = p.data; S.docs = d.data; S.events = ev.data;
   S.me = S.members.find((x) => x.user_id === S.session.user.id) || null;
-  if (S.me?.is_admin) {
+  if (can('membres')) {
     const inv = await sb.from('invitations').select('*'); if (!inv.error) S.invitations = inv.data;
   }
   loadThumbs();
@@ -160,11 +177,22 @@ function startRealtime() {
 /* ---------- Navigation ---------- */
 const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
-  const items = NAV.concat(S.me?.is_admin ? [['administration', 'Administration', 'admin']] : []);
+  const items = NAV.concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span></button>`).join('')
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
-function go(v) { S.view = v; try { history.replaceState(null, '', '#' + v); } catch (e) {} if (v === 'discussion' && !S.msgs[S.chan]) loadMessages(S.chan); render(); window.scrollTo(0, 0); }
+// Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
+const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['bibliotheque', 'Documents', 'lib']];
+function tabbarHtml() {
+  const more = [['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const inMore = more.some((x) => x[0] === S.view);
+  return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
+    <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
+  ${S.moreOpen ? `<div class="sheetwrap" data-closemore><div class="card moresheet" role="dialog" aria-label="Plus de pages"><div class="grab"></div>
+    ${more.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
+    <div class="whoami"><span>Connecté·e : <b>${esc(display(S.me))}</b></span><button class="btn small" data-logout>${ico('out')} Se déconnecter</button></div></div></div>` : ''}`;
+}
+function go(v) { S.view = v; S.moreOpen = false; S.evModal = null; try { history.replaceState(null, '', '#' + v); } catch (e) {} if (v === 'discussion' && !S.msgs[S.chan]) loadMessages(S.chan); render(); window.scrollTo(0, 0); }
 
 /* ---------- Vues ---------- */
 function chefChip(m, sub) {
@@ -177,10 +205,10 @@ function docRow(d) {
   return `<div class="it"><div class="ficon" style="--k:${c.k}">${esc(ext(d))}</div><div style="min-width:0"><button class="linkbtn t" style="text-decoration:none;color:var(--fg);text-align:left" data-open="${esc(d.id)}">${esc(d.title)}</button><div class="m">${esc(c.name)} · ${fmtDate(d.created_at)}</div></div></div>`;
 }
 const ext = (d) => (d.file_path.split('.').pop() || 'FICHIER').toUpperCase().slice(0, 4);
-const nextEvent = () => S.events.find((e) => e.date >= today());
+const nextEvent = () => occurrences(today(), addDays(today(), 400))[0];
 
 function vAccueil() {
-  const ev = nextEvent(); const nd = ev ? new Date(ev.date + 'T12:00:00') : null;
+  const o = nextEvent(); const ev = o?.e; const nd = o ? parseD(o.start) : null;
   return `<div class="view">
   <div class="hero">
     <div class="main"><span class="eyebrow" style="color:inherit;opacity:.85">Espace des chefs et cheftaines</span>
@@ -190,7 +218,7 @@ function vAccueil() {
       <img class="hands" src="assets/logo.png" alt="">
     </div>
     <div class="card next"><span class="eyebrow">Prochain rendez-vous</span>
-      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
+      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
       <button class="btn" data-go="calendrier" style="align-self:flex-start">${ico('cal')} Calendrier</button>
     </div>
   </div>
@@ -228,7 +256,7 @@ function vOrg() {
   const unassigned = S.members.filter((m) => !m.group_id && m.role !== 'principale');
   const n = Math.max(S.groups.length, 1);
   return `<div class="view">
-  <div><span class="eyebrow">Unité 2026/2027</span><h1>Organigramme</h1><p class="lead" style="margin-top:6px">Chaque chef et cheftaine appartient à un groupe et à un pôle. Seuls les adultes figurent ici.${S.me.is_admin ? ' Modifiez les affectations depuis la page Administration.' : ''}</p></div>
+  <div><span class="eyebrow">Unité 2026/2027</span><h1>Organigramme</h1><p class="lead" style="margin-top:6px">Chaque chef et cheftaine appartient à un groupe et à un pôle. Seuls les adultes figurent ici.${can('membres') ? ' Modifiez les affectations depuis la page Administration.' : ''}</p></div>
   <div class="card org-wrap"><div class="org">
     <div class="row" style="justify-content:center">${top.map((m) => `<div class="node top"><div class="av">${esc(initial(m))}</div><div class="n" style="font-size:1.15rem">${esc(display(m))}</div><div class="r">Cheffe principale de l'unité</div></div>`).join('') || '<div class="node top"><div class="n">Cheffe principale</div><div class="r">à désigner</div></div>'}</div>
     <div class="vline"></div>
@@ -259,7 +287,7 @@ function vPoles() {
     ${c.blocks.map((b) => `<div class="card"><h3 style="margin-bottom:8px">${esc(b[0])}</h3><ul class="clean">${b[1].map((m) => `<li>${esc(m)}</li>`).join('')}</ul></div>`).join('')}
   </div>
   <div class="card"><h3 style="margin-bottom:10px">Membres du pôle</h3>
-    ${mem.length ? `<div class="members">${mem.map((m) => `<div style="width:230px;max-width:100%">${chefChip(m, [grp(m.group_id)?.name, isDoyenne(m) ? 'doyenne' : ''].filter(Boolean).join(' · '))}</div>`).join('')}</div>` : `<div class="empty">Aucun membre attribué pour l'instant.${S.me.is_admin ? ' Attribuez les pôles depuis la page Administration.' : ''}</div>`}</div>
+    ${mem.length ? `<div class="members">${mem.map((m) => `<div style="width:230px;max-width:100%">${chefChip(m, [grp(m.group_id)?.name, isDoyenne(m) ? 'doyenne' : ''].filter(Boolean).join(' · '))}</div>`).join('')}</div>` : `<div class="empty">Aucun membre attribué pour l'instant.${can('membres') ? ' Attribuez les pôles depuis la page Administration.' : ''}</div>`}</div>
   <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h3>Documents du pôle</h3><button class="btn" data-go="bibliotheque" data-setpole="${p.id}">${ico('up')} Ajouter</button></div>
     ${pd.length ? `<div class="list">${pd.map(docRow).join('')}</div>` : '<div class="empty">Pas encore de document pour ce pôle.</div>'}</div>
   </div>`;
@@ -293,7 +321,7 @@ function vBiblio() {
     <div class="chips"><button data-cat="all" aria-pressed="${S.libCat === 'all'}">Tout</button>${CATS.map((c) => `<button data-cat="${c.id}" aria-pressed="${S.libCat === c.id}">${c.name}</button>`).join('')}</div></div>
   <div class="docs">${list.map((d) => {
     const c = CATS.find((c) => c.id === d.category) || CATS[0]; const po = pole(d.pole_id); const by = member(d.uploaded_by);
-    const canDel = S.me.is_admin || d.uploaded_by === S.me.id;
+    const canDel = can('bibliotheque') || d.uploaded_by === S.me.id;
     const th = S.thumbs[d.file_path];
     return `<div class="card doc"><div class="thumb">${th ? `<img src="${esc(th)}" alt="" loading="lazy">` : `<div class="ficon" style="--k:${c.k}">${esc(ext(d))}</div>`}</div>
       <button class="linkbtn t" style="text-decoration:none;color:var(--fg);text-align:left" data-open="${esc(d.id)}">${esc(d.title)}</button>
@@ -346,19 +374,212 @@ async function openDoc(id) {
   if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
 }
 
+/* ---------- Calendrier (vues jour, semaine, mois, année, comme dans Teams) ---------- */
+const EV_CATS = [
+  ['samedi', 'Samedi scout', 'var(--green)'], ['reunion', 'Réunion', 'var(--c-blue)'], ['sortie', 'Sortie ou camp', 'var(--c-red)'],
+  ['formation', 'Formation', 'var(--c-purple)'], ['autre', 'Autre', 'var(--c-yellow)']
+];
+const REPEATS = { none: 'Ne se répète pas', weekly: 'Chaque semaine', biweekly: 'Toutes les 2 semaines', monthly: 'Chaque mois' };
+const evColor = (e) => (EV_CATS.find((c) => c[0] === e.category) || EV_CATS[0])[2];
+const CAL_VIEWS = [['jour', 'Jour'], ['semaine', 'Semaine'], ['mois', 'Mois'], ['annee', 'Année']];
+const HOUR_H = 48;
+const fmtHM = (t) => (t ? t.slice(0, 5).replace(':', 'h') : '');
+const toMin = (t) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+const cap = (s) => s.replace(/^./, (c) => c.toUpperCase());
+const fmtLong = (s, opt = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) => cap(parseD(s).toLocaleDateString('fr-FR', opt));
+
+// Toutes les occurrences (événements répétés compris) qui touchent la période [from, to]
+function occurrences(from, to) {
+  const out = [];
+  for (const e of S.events) {
+    const len = e.end_date ? Math.max(0, dayDiff(e.date, e.end_date)) : 0;
+    const rep = e.repeat && e.repeat !== 'none' ? e.repeat : null;
+    const last = rep ? (e.repeat_until && e.repeat_until < to ? e.repeat_until : to) : e.date;
+    const d0 = parseD(e.date);
+    for (let i = 0; i < 1000; i++) {
+      let s;
+      if (!rep) { if (i) break; s = e.date; }
+      else if (rep === 'monthly') {
+        const t = new Date(d0.getFullYear(), d0.getMonth() + i, d0.getDate());
+        if (t.getDate() !== d0.getDate()) continue; // pas de 31 dans ce mois
+        s = isoD(t);
+      } else s = addDays(e.date, i * (rep === 'weekly' ? 7 : 14));
+      if (s > last) break;
+      const end = addDays(s, len);
+      if (end >= from) out.push({ e, start: s, end, key: e.id + '|' + s });
+    }
+  }
+  return out.sort((a, b) => a.start.localeCompare(b.start) || (b.e.all_day - a.e.all_day) || (a.e.start_time || '').localeCompare(b.e.start_time || ''));
+}
+const occOn = (list, day) => list.filter((o) => o.start <= day && o.end >= day);
+const isTimed = (o) => !o.e.all_day && o.start === o.end && o.e.start_time;
+function occWhen(o) {
+  const e = o.e;
+  const range = o.start === o.end ? fmtLong(o.start) : `Du ${fmtLong(o.start, { weekday: 'long', day: 'numeric', month: 'long' }).toLowerCase()} au ${fmtLong(o.end).toLowerCase()}`;
+  if (e.all_day || !e.start_time) return range + (o.start === o.end ? ', toute la journée' : '');
+  return `${range}, ${fmtHM(e.start_time)}${e.end_time ? ' – ' + fmtHM(e.end_time) : ''}`;
+}
+function calTitle() {
+  const d = S.calDate, v = S.calView;
+  if (v === 'jour') return fmtLong(d);
+  if (v === 'annee') return d.slice(0, 4);
+  if (v === 'mois') return cap(parseD(d).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
+  const a = startOfWeek(d), b = addDays(a, 6), pa = parseD(a), pb = parseD(b);
+  if (pa.getMonth() === pb.getMonth()) return `${pa.getDate()} – ${pb.getDate()} ${pb.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}`;
+  return `${pa.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} – ${pb.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+}
+function calMove(n) {
+  const v = S.calView, d = parseD(S.calDate);
+  if (v === 'jour') S.calDate = addDays(S.calDate, n);
+  else if (v === 'semaine') S.calDate = addDays(S.calDate, 7 * n);
+  else if (v === 'mois') S.calDate = isoD(new Date(d.getFullYear(), d.getMonth() + n, 1));
+  else S.calDate = isoD(new Date(d.getFullYear() + n, 0, 1));
+  if (v === 'mois') S.calSel = S.calDate.slice(0, 7) === today().slice(0, 7) ? today() : S.calDate;
+}
+const chip = (o, day) => {
+  const t = isTimed(o) ? `<i>${fmtHM(o.e.start_time)}</i> ` : '';
+  const cont = day && o.start < day ? ' cont' : '';
+  return `<button class="evchip${o.e.all_day || !isTimed(o) ? ' full' : ''}${cont}" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}" title="${esc(o.e.title)}">${t}${esc(o.e.title)}</button>`;
+};
+function dayList(list, day) {
+  const items = occOn(list, day);
+  return `<div class="card daypanel"><div class="row" style="justify-content:space-between"><h3>${esc(fmtLong(day, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>${can('calendrier') ? `<button class="btn small" data-evnew="${day}">+ Ajouter</button>` : ''}</div>
+    ${items.length ? `<div class="agenda">${items.map((o) => `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${o.e.location ? `<small>${esc(o.e.location)}</small>` : ''}</span></button>`).join('')}</div>` : '<p style="color:var(--muted)">Rien de prévu ce jour-là.</p>'}</div>`;
+}
+function vMonth() {
+  const d = parseD(S.calDate), first = isoD(new Date(d.getFullYear(), d.getMonth(), 1));
+  const start = startOfWeek(first), lastDay = isoD(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+  const weeks = Math.ceil((dayDiff(start, lastDay) + 1) / 7), end = addDays(start, weeks * 7 - 1);
+  const list = occurrences(start, end), td = today(), sel = S.calSel || td;
+  let cells = '';
+  for (let i = 0; i < weeks * 7; i++) {
+    const day = addDays(start, i), items = occOn(list, day), out = day.slice(0, 7) !== first.slice(0, 7);
+    cells += `<div class="mcell${out ? ' out' : ''}${day === td ? ' today' : ''}${day === sel ? ' sel' : ''}" data-calday="${day}"><span class="num">${parseD(day).getDate()}</span>
+      <div class="mchips">${items.slice(0, 3).map((o) => chip(o, day)).join('')}${items.length > 3 ? `<span class="more">+${items.length - 3}</span>` : ''}</div></div>`;
+  }
+  return `<div class="card mgrid-wrap"><div class="mhead">${['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].map((x) => `<span>${x}</span>`).join('')}</div><div class="mgrid">${cells}</div></div>${dayList(list, sel)}`;
+}
+function vTimeGrid(nDays) {
+  const start = nDays === 1 ? S.calDate : startOfWeek(S.calDate), days = Array.from({ length: nDays }, (_, i) => addDays(start, i));
+  const list = occurrences(start, days[nDays - 1]), td = today(), now = new Date();
+  const allday = days.map((day) => `<div class="adcell" data-calday="${day}">${occOn(list, day).filter((o) => !isTimed(o)).map((o) => chip(o, day)).join('')}</div>`).join('');
+  const cols = days.map((day) => {
+    const timed = occOn(list, day).filter(isTimed).map((o) => ({ o, s: toMin(o.e.start_time), f: Math.max(toMin(o.e.end_time || '') || 0, toMin(o.e.start_time) + 30) }));
+    // Événements qui se chevauchent : côte à côte
+    timed.sort((a, b) => a.s - b.s || b.f - a.f);
+    let group = [], groupEnd = -1; const placed = [];
+    const flush = () => { const n = Math.max(...group.map((g) => g.col)) + 1; group.forEach((g) => (g.n = n)); placed.push(...group); group = []; };
+    for (const t of timed) {
+      if (t.s >= groupEnd && group.length) flush();
+      const used = new Set(group.filter((g) => g.f > t.s).map((g) => g.col)); let c = 0; while (used.has(c)) c++;
+      t.col = c; group.push(t); groupEnd = Math.max(groupEnd, t.f);
+    }
+    if (group.length) flush();
+    const evs = placed.map((t) => `<button class="tev" style="--k:${evColor(t.o.e)};top:${(t.s / 60) * HOUR_H}px;height:${Math.max(22, ((t.f - t.s) / 60) * HOUR_H - 2)}px;left:calc(${(t.col / t.n) * 100}% + 2px);width:calc(${100 / t.n}% - 4px)" data-occ="${esc(t.o.key)}"><b>${esc(t.o.e.title)}</b><span>${fmtHM(t.o.e.start_time)}${t.o.e.end_time ? ' – ' + fmtHM(t.o.e.end_time) : ''}${t.o.e.location ? ' · ' + esc(t.o.e.location) : ''}</span></button>`).join('');
+    const nowLine = day === td ? `<div class="nowline" style="top:${((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H}px"></div>` : '';
+    return `<div class="tcol${day === td ? ' today' : ''}">${Array.from({ length: 24 }, (_, h) => `<div class="slot" data-slot="${day}|${h}"></div>`).join('')}${evs}${nowLine}</div>`;
+  }).join('');
+  const heads = days.map((day) => { const p = parseD(day); return `<button class="thd${day === td ? ' today' : ''}" data-calgoday="${day}"><small>${p.toLocaleDateString('fr-FR', { weekday: 'short' })}</small><b>${p.getDate()}</b></button>`; }).join('');
+  return `<div class="card tgrid-wrap"><div class="tgrid" style="--days:${nDays}">
+    <div class="trow thead"><div class="tlbl"></div>${heads}</div>
+    <div class="trow tallday"><div class="tlbl">Journée</div>${allday}</div>
+    <div class="tscroll" id="tscroll"><div class="trow tbody"><div class="tlbl hours">${Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HOUR_H}px">${h ? pad2(h) + ':00' : ''}</span>`).join('')}</div>${cols}</div></div>
+  </div></div>`;
+}
+function vYear() {
+  const y = Number(S.calDate.slice(0, 4)), list = occurrences(`${y}-01-01`, `${y}-12-31`), td = today();
+  const busy = {}; list.forEach((o) => { for (let d = o.start, i = 0; d <= o.end && i < 366; d = addDays(d, 1), i++) busy[d] = busy[d] || evColor(o.e); });
+  const months = Array.from({ length: 12 }, (_, m) => {
+    const first = isoD(new Date(y, m, 1)), start = startOfWeek(first), n = new Date(y, m + 1, 0).getDate();
+    const lead = dayDiff(start, first);
+    let cells = '<span></span>'.repeat(lead);
+    for (let d = 1; d <= n; d++) { const day = isoD(new Date(y, m, d)); cells += `<button class="yd${busy[day] ? ' busy' : ''}${day === td ? ' today' : ''}" ${busy[day] ? `style="--k:${busy[day]}"` : ''} data-calgoday="${day}" aria-label="${esc(fmtLong(day))}${busy[day] ? ', événement prévu' : ''}">${d}</button>`; }
+    return `<div class="card ymonth"><button class="linkbtn ytitle" data-calgomonth="${first}">${cap(new Date(y, m, 1).toLocaleDateString('fr-FR', { month: 'long' }))}</button><div class="ygrid">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((x) => `<span class="yh">${x}</span>`).join('')}${cells}</div></div>`;
+  }).join('');
+  return `<div class="yearwrap">${months}</div>`;
+}
+function evModal() {
+  const m = S.evModal; if (!m) return '';
+  if (m.mode === 'view') {
+    const o = m.occ, e = o.e, by = member(e.created_by), cat = EV_CATS.find((c) => c[0] === e.category) || EV_CATS[0];
+    return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="evTitle">
+      <div class="row" style="justify-content:space-between;align-items:flex-start"><div><span class="pill"><span class="dot" style="--k:${cat[2]}"></span>${cat[1]}</span><h2 id="evTitle" style="margin-top:8px">${esc(e.title)}</h2></div><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+      <p><b>${esc(occWhen(o))}</b></p>
+      ${e.repeat && e.repeat !== 'none' ? `<p style="color:var(--muted)">${REPEATS[e.repeat]}${e.repeat_until ? " jusqu'au " + esc(fmtLong(e.repeat_until).toLowerCase()) : ''}</p>` : ''}
+      ${e.location ? `<p>📍 ${esc(e.location)}</p>` : ''}
+      ${e.details ? `<p style="white-space:pre-wrap">${esc(e.details)}</p>` : ''}
+      ${by ? `<p style="color:var(--muted);font-size:.85rem">Ajouté par ${esc(display(by))}</p>` : ''}
+      ${can('calendrier') ? `<div class="row" style="justify-content:flex-end"><button class="btn danger" data-evdel="${e.id}">${e.repeat && e.repeat !== 'none' ? 'Supprimer la série' : 'Supprimer'}</button><button class="btn primary" data-evedit="${esc(o.key)}">Modifier</button></div>` : ''}
+    </div></div>`;
+  }
+  const e = m.ev;
+  return `<div class="modal" data-closemodal><form class="card sheet" id="evForm" role="dialog" aria-modal="true" aria-labelledby="evFormTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="evFormTitle">${e.id ? "Modifier l'événement" : 'Nouvel événement'}</h2><button type="button" class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <label class="field" for="efTitle">Titre<input id="efTitle" required maxlength="120" value="${esc(e.title || '')}" placeholder="Ex. Samedi scout, réunion des chefs…"></label>
+    <div class="formrow">
+      <label class="field" for="efCat">Catégorie<select id="efCat">${EV_CATS.map((c) => `<option value="${c[0]}" ${c[0] === (e.category || 'samedi') ? 'selected' : ''}>${c[1]}</option>`).join('')}</select></label>
+      <label class="field check" for="efAllDay"><span>Toute la journée</span><input id="efAllDay" type="checkbox" ${e.all_day ? 'checked' : ''}></label>
+    </div>
+    <div class="dtgrid">
+      <label class="field" for="efStart">Début<input id="efStart" type="date" required value="${esc(e.date || '')}"></label>
+      <label class="field timef" for="efStartT" ${e.all_day ? 'hidden' : ''}>Heure<input id="efStartT" type="time" step="900" value="${esc((e.start_time || '14:00').slice(0, 5))}"></label>
+      <label class="field" for="efEnd">Fin<input id="efEnd" type="date" required value="${esc(e.end_date || e.date || '')}"></label>
+      <label class="field timef" for="efEndT" ${e.all_day ? 'hidden' : ''}>Heure<input id="efEndT" type="time" step="900" value="${esc((e.end_time || '17:00').slice(0, 5))}"></label>
+    </div>
+    <div class="formrow">
+      <label class="field" for="efRepeat">Répétition<select id="efRepeat">${Object.entries(REPEATS).map(([k, v]) => `<option value="${k}" ${k === (e.repeat || 'none') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field" for="efUntil" id="efUntilWrap" ${!e.repeat || e.repeat === 'none' ? 'hidden' : ''}>Jusqu'au<input id="efUntil" type="date" value="${esc(e.repeat_until || '')}"></label>
+    </div>
+    <label class="field" for="efLoc">Lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia"></label>
+    <label class="field" for="efDetails">Précisions<textarea id="efDetails" maxlength="2000">${esc(e.details || '')}</textarea></label>
+    <p class="err" id="efErr" role="alert" hidden></p>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-closemodal>Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div>
+  </form></div>`;
+}
 function vCal() {
-  const up = S.events.filter((e) => e.date >= today()); const past = S.events.filter((e) => e.date < today()).slice(-5).reverse();
-  const row = (e) => { const d = new Date(e.date + 'T12:00:00'); return `<div class="it"><div class="dd"><b>${d.getDate()}</b><small>${d.toLocaleDateString('fr-FR', { month: 'short' })}</small></div><div><b>${esc(e.title)}</b><div style="color:var(--muted);font-size:.88rem">${esc(d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}${e.details ? ' · ' + esc(e.details) : ''}</div></div>${S.me.is_admin ? `<button class="btn small danger" data-delevent="${e.id}">Supprimer</button>` : '<span></span>'}</div>`; };
-  return `<div class="view">
-  <div><span class="eyebrow">Planification</span><h1>Calendrier</h1><p class="lead" style="margin-top:6px">Les samedis scouts ont lieu un samedi sur deux.</p></div>
-  <div class="card cal">${up.map(row).join('') || '<div class="empty">Aucune date à venir.</div>'}</div>
-  ${S.me.is_admin ? `<form class="card" id="eventForm"><h3 style="margin-bottom:10px">Ajouter une date</h3><div class="formrow">
-    <label class="field" for="evDate">Date<input id="evDate" type="date" required></label>
-    <label class="field" for="evTitle">Titre<input id="evTitle" value="Samedi scout" required></label>
-    <label class="field" for="evDetails">Précisions<input id="evDetails" placeholder="Lieu, horaires…"></label>
-    <button class="btn primary" type="submit">Ajouter</button></div></form>` : ''}
-  ${past.length ? `<div class="card cal"><h3 style="margin-bottom:6px">Dates passées</h3>${past.map(row).join('')}</div>` : ''}
+  const v = S.calView;
+  const body = v === 'jour' ? vTimeGrid(1) : v === 'semaine' ? vTimeGrid(7) : v === 'annee' ? vYear() : vMonth();
+  return `<div class="view wide">
+  <div><span class="eyebrow">Planification</span><h1>Calendrier</h1></div>
+  <div class="calbar">
+    <div class="row"><button class="btn" data-caltoday>Aujourd'hui</button><span class="row" style="gap:4px"><button class="btn icon" data-calnav="-1" aria-label="Période précédente">‹</button><button class="btn icon" data-calnav="1" aria-label="Période suivante">›</button></span><h2 class="caltitle">${esc(calTitle())}</h2></div>
+    <div class="row"><div class="seg" role="group" aria-label="Affichage">${CAL_VIEWS.map(([k, l]) => `<button data-calview="${k}" aria-pressed="${v === k}">${l}</button>`).join('')}</div>
+      ${can('calendrier') ? `<button class="btn primary" data-evnew="">+ Nouvel événement</button>` : ''}</div>
+  </div>
+  <div class="legend">${EV_CATS.map((c) => `<span><span class="dot" style="--k:${c[2]}"></span>${c[1]}</span>`).join('')}</div>
+  ${body}
   </div>`;
+}
+function findOcc(key) {
+  const [id, start] = key.split('|'); const e = S.events.find((x) => String(x.id) === id); if (!e) return null;
+  const len = e.end_date ? dayDiff(e.date, e.end_date) : 0;
+  return { e, start, end: addDays(start, len), key };
+}
+function newEventDraft(day, hour) {
+  const d = day || (S.calView === 'mois' ? S.calSel || today() : S.calDate);
+  const h = hour ?? null;
+  return { date: d, end_date: d, all_day: h === null, start_time: h === null ? '14:00' : pad2(h) + ':00', end_time: h === null ? '17:00' : pad2(Math.min(h + 1, 23)) + ':' + (h >= 23 ? '59' : '00'), category: 'samedi', repeat: 'none' };
+}
+async function saveEvent() {
+  const v = (id) => $(id).value.trim();
+  const allDay = $('#efAllDay').checked, start = v('#efStart'), end = v('#efEnd') || start;
+  const err = (t) => { const el = $('#efErr'); el.textContent = t; el.hidden = false; };
+  if (!v('#efTitle')) return err('Indiquez un titre.');
+  if (!start) return err('Indiquez la date de début.');
+  if (end < start) return err('La fin doit être après le début.');
+  if (!allDay && end === start && v('#efEndT') && v('#efEndT') <= v('#efStartT')) return err("L'heure de fin doit être après l'heure de début.");
+  const repeat = $('#efRepeat').value;
+  if (repeat !== 'none' && v('#efUntil') && v('#efUntil') < start) return err('La date de fin de répétition doit être après le début.');
+  const row = {
+    title: v('#efTitle'), category: $('#efCat').value, date: start, end_date: end === start ? null : end, all_day: allDay,
+    start_time: allDay ? null : v('#efStartT') || null, end_time: allDay ? null : v('#efEndT') || null,
+    location: v('#efLoc') || null, details: v('#efDetails') || null, repeat, repeat_until: repeat === 'none' ? null : v('#efUntil') || null
+  };
+  const id = S.evModal.ev.id;
+  const r = id ? await sb.from('events').update(row).eq('id', id).select().single() : await sb.from('events').insert({ ...row, created_by: S.me.id }).select().single();
+  if (r.error) return fail(r.error);
+  S.events = S.events.filter((x) => x.id !== r.data.id).concat(r.data).sort((a, b) => a.date.localeCompare(b.date));
+  S.evModal = null; render(); toast(id ? 'Événement modifié' : 'Événement ajouté');
 }
 
 function reactionsHtml(m) {
@@ -391,7 +612,7 @@ function vChat() {
       ${c.announce ? pushBanner() : ''}
       <div class="msgs" id="msgs">${!list ? '<p style="color:var(--muted)">Chargement…</p>' : list.length ? list.map((m) => {
         const a = member(m.member_id); const k = grp(a?.group_id)?.color || 'var(--muted)';
-        const canDel = S.me.is_admin || m.member_id === S.me.id;
+        const canDel = can('discussion') || m.member_id === S.me.id;
         return `<div class="msg" style="--k:${k}"><div class="av">${esc(initial(a))}</div><div class="b"><div class="h"><b>${esc(display(a))}</b>${esc(fmtTime(m.created_at))}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div><p>${esc(m.body)}</p>${reactionsHtml(m)}</div></div>`;
       }).join('') : `<p style="color:var(--muted)">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`}</div>
       ${S.emojiOpen ? `<div class="emojis" role="group" aria-label="Emojis">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>` : ''}
@@ -471,23 +692,33 @@ function storageGauge() {
 }
 
 function vAdmin() {
-  if (!S.me.is_admin) return '<div class="view"><div class="empty">Page réservée aux administrateurs.</div></div>';
+  if (!canAdminPage()) return '<div class="view"><div class="empty">Page réservée aux administrateurs.</div></div>';
+  const admin = S.me.is_admin;
   const inv = (id) => S.invitations.find((i) => i.member_id === id)?.email || '';
   const opts = (arr, val, empty) => `<option value="">${empty}</option>` + arr.map((x) => `<option value="${x.id}" ${x.id === val ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-  const row = (m) => `<tr data-member="${m.id}">
-    <td><select data-f="title">${['Chef', 'Cheftaine', 'Tata'].map((t) => `<option ${t === m.title ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
-    <td><input data-f="first_name" value="${esc(m.first_name)}" aria-label="Prénom"></td>
-    <td><select data-f="group_id">${opts(S.groups, m.group_id, 'Aucun')}</select></td>
-    <td><select data-f="pole_id">${opts(S.poles, m.pole_id, 'À attribuer')}</select></td>
-    <td><select data-f="role">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
-    <td><input data-f="email" type="email" value="${esc(inv(m.id))}" placeholder="adresse@exemple.fr" aria-label="E-mail"></td>
-    <td style="text-align:center"><input data-f="is_admin" type="checkbox" ${m.is_admin ? 'checked' : ''} aria-label="Administrateur"></td>
+  const row = (m) => {
+    const ro = !admin && m.is_admin ? 'disabled' : ''; // la fiche d'un administrateur n'est modifiable que par un administrateur
+    return `<tr data-member="${m.id}">
+    <td><select data-f="title" ${ro}>${['Chef', 'Cheftaine', 'Tata'].map((t) => `<option ${t === m.title ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+    <td><input data-f="first_name" value="${esc(m.first_name)}" aria-label="Prénom" ${ro}></td>
+    <td><select data-f="group_id" ${ro}>${opts(S.groups, m.group_id, 'Aucun')}</select></td>
+    <td><select data-f="pole_id" ${ro}>${opts(S.poles, m.pole_id, 'À attribuer')}</select></td>
+    <td><select data-f="role" ${ro}>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+    <td><input data-f="email" type="email" value="${esc(inv(m.id))}" placeholder="adresse@exemple.fr" aria-label="E-mail" ${ro}></td>
+    <td style="text-align:center">${admin ? `<input data-f="is_admin" type="checkbox" ${m.is_admin ? 'checked' : ''} aria-label="Administrateur">` : m.is_admin ? 'Oui' : ''}</td>
     <td style="font-size:.8rem;color:var(--muted)">${m.user_id ? 'Compte créé' : inv(m.id) ? 'Invité' : 'Pas d\'accès'}</td>
-    <td style="white-space:nowrap"><button class="btn small" data-savemember>Enregistrer</button> <button class="btn small danger" data-delmember>Retirer</button></td></tr>`;
+    <td style="white-space:nowrap">${ro ? '' : '<button class="btn small" data-savemember>Enregistrer</button> <button class="btn small danger" data-delmember>Retirer</button>'}</td></tr>`;
+  };
+  const permRow = (m) => `<tr><td><b>${esc(display(m))}</b>${m.user_id ? '' : '<small style="display:block;color:var(--muted)">Pas encore de compte</small>'}</td>${m.is_admin
+    ? `<td colspan="${PERMS.length}" style="color:var(--green-ink);font-weight:700">Administrateur : toutes les autorisations</td>`
+    : PERMS.map(([k, l]) => `<td style="text-align:center"><input type="checkbox" data-perm="${k}" data-pmember="${m.id}" ${(m.permissions || []).includes(k) ? 'checked' : ''} aria-label="${esc(l)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
   return `<div class="view">
-  <div><span class="eyebrow">Réservé aux administrateurs</span><h1>Administration</h1>
+  <div><span class="eyebrow">${admin ? 'Réservé aux administrateurs' : 'Gestion des chefs et des groupes'}</span><h1>Administration</h1>
     <p class="lead" style="margin-top:6px">Ajoutez l'e-mail d'un chef pour lui donner accès : il pourra ensuite créer son compte depuis la page de connexion. Pour retirer un accès, effacez son e-mail ou retirez la personne.</p></div>
   ${storageGauge()}
+  ${admin ? `<div class="card"><h3>Autorisations</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Cochez ce que chaque chef peut faire en plus de consulter, déposer des documents et écrire. Chaque case est enregistrée tout de suite. Seuls les administrateurs donnent des autorisations.</p>
+    <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${PERMS.map(([k, l, d]) => `<th title="${esc(d)}">${esc(l)}<small>${esc(d)}</small></th>`).join('')}</tr></thead>
+    <tbody>${S.members.map(permRow).join('')}</tbody></table></div></div>` : ''}
   <div class="card"><h3 style="margin-bottom:10px">Chefs et cheftaines</h3><div class="tablewrap"><table class="admin">
     <thead><tr><th>Titre</th><th>Prénom</th><th>Groupe</th><th>Pôle</th><th>Rôle</th><th>E-mail d'accès</th><th>Admin</th><th>Accès</th><th></th></tr></thead>
     <tbody>${S.members.map(row).join('')}</tbody></table></div></div>
@@ -520,8 +751,9 @@ function render() {
     <div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
     <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button></div>
-  </aside><main id="main">${(V[S.view] || vAccueil)()}</main></div>`;
+  </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${S.view === 'calendrier' ? evModal() : ''}</div>`;
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
+  const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (draft && $('#msgIn')) $('#msgIn').value = draft;
   if (active === 'msgIn') { const i = $('#msgIn'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
@@ -533,6 +765,24 @@ root.addEventListener('click', async (e) => {
   const a = t.closest('[data-auth]'); if (a) { authMode = a.dataset.auth; authErr = authMsg = ''; render(); return; }
   if (t.closest('[data-logout]')) { await sb.auth.signOut(); return; }
   const nv = t.closest('button[data-v]'); if (nv) return go(nv.dataset.v);
+  if (t.closest('[data-more]')) { S.moreOpen = !S.moreOpen; return render(); }
+  if (t.matches('[data-closemore]')) { S.moreOpen = false; return render(); }
+  // Calendrier
+  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { S.evModal = null; return render(); }
+  const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
+  const cn = t.closest('[data-calnav]'); if (cn) { calMove(Number(cn.dataset.calnav)); return render(); }
+  if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return render(); }
+  const cg = t.closest('[data-calgoday]'); if (cg) { S.calDate = S.calSel = cg.dataset.calgoday; S.calView = 'jour'; return render(); }
+  const cm = t.closest('[data-calgomonth]'); if (cm) { S.calDate = S.calSel = cm.dataset.calgomonth; S.calView = 'mois'; return render(); }
+  const oc = t.closest('[data-occ]'); if (oc) { const o = findOcc(oc.dataset.occ); if (o) { S.evModal = { mode: 'view', occ: o }; render(); } return; }
+  const en = t.closest('[data-evnew]'); if (en) { S.evModal = { mode: 'edit', ev: newEventDraft(en.dataset.evnew || null) }; render(); $('#efTitle')?.focus(); return; }
+  const ee = t.closest('[data-evedit]'); if (ee) { const o = findOcc(ee.dataset.evedit); if (o) { S.evModal = { mode: 'edit', ev: { ...o.e } }; render(); $('#efTitle')?.focus(); } return; }
+  const ed = t.closest('[data-evdel]'); if (ed) return confirmThen(ed, 'Confirmer la suppression', async () => {
+    const r = await sb.from('events').delete().eq('id', ed.dataset.evdel); if (r.error) return fail(r.error);
+    S.events = S.events.filter((x) => String(x.id) !== ed.dataset.evdel); S.evModal = null; render(); toast('Événement supprimé');
+  });
+  const sl = t.closest('[data-slot]'); if (sl && can('calendrier')) { const [d, h] = sl.dataset.slot.split('|'); S.evModal = { mode: 'edit', ev: newEventDraft(d, Number(h)) }; render(); $('#efTitle')?.focus(); return; }
+  const cd = t.closest('[data-calday]'); if (cd) { if (S.calView === 'mois') { S.calSel = cd.dataset.calday; return render(); } if (can('calendrier')) { S.evModal = { mode: 'edit', ev: newEventDraft(cd.dataset.calday) }; render(); $('#efTitle')?.focus(); } return; }
   const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
@@ -555,10 +805,6 @@ root.addEventListener('click', async (e) => {
   const dm = t.closest('[data-delmsg]'); if (dm) return confirmThen(dm, 'Confirmer', async () => {
     const r = await sb.from('messages').delete().eq('id', dm.dataset.delmsg); if (r.error) return fail(r.error);
     S.msgs[S.chan] = S.msgs[S.chan].filter((x) => String(x.id) !== dm.dataset.delmsg); render();
-  });
-  const de = t.closest('[data-delevent]'); if (de) return confirmThen(de, 'Confirmer', async () => {
-    const r = await sb.from('events').delete().eq('id', de.dataset.delevent); if (r.error) return fail(r.error);
-    S.events = S.events.filter((x) => x.id !== de.dataset.delevent); render(); toast('Date supprimée');
   });
   const sm = t.closest('[data-savemember]'); if (sm) return saveMember(sm.closest('tr'));
   const rm = t.closest('[data-delmember]'); if (rm) return confirmThen(rm, 'Confirmer le retrait', async () => {
@@ -593,7 +839,8 @@ async function setInvitation(memberId, email) {
 }
 async function saveMember(tr) {
   const id = tr.dataset.member; const f = (k) => tr.querySelector(`[data-f="${k}"]`);
-  const patch = { title: f('title').value, first_name: f('first_name').value.trim(), group_id: f('group_id').value || null, pole_id: f('pole_id').value || null, role: f('role').value, is_admin: f('is_admin').checked };
+  const patch = { title: f('title').value, first_name: f('first_name').value.trim(), group_id: f('group_id').value || null, pole_id: f('pole_id').value || null, role: f('role').value };
+  if (f('is_admin')) patch.is_admin = f('is_admin').checked;
   if (!patch.first_name) return toast('Le prénom est obligatoire');
   try {
     const r = await sb.from('members').update(patch).eq('id', id).select().single(); if (r.error) throw r.error;
@@ -603,9 +850,20 @@ async function saveMember(tr) {
   } catch (e) { fail(e); }
 }
 
+async function savePerm(box) {
+  const m = member(box.dataset.pmember); if (!m) return;
+  const next = new Set(m.permissions || []); box.checked ? next.add(box.dataset.perm) : next.delete(box.dataset.perm);
+  const r = await sb.from('members').update({ permissions: [...next] }).eq('id', m.id).select().single();
+  if (r.error) { box.checked = !box.checked; return fail(r.error); }
+  m.permissions = r.data.permissions; toast('Autorisation enregistrée');
+}
 root.addEventListener('change', (e) => {
   if (e.target.id === 'upFile' && e.target.files.length) addFiles(e.target.files);
   if (e.target.id === 'upPole') S.upPole = e.target.value;
+  if (e.target.id === 'efAllDay') document.querySelectorAll('.timef').forEach((x) => (x.hidden = e.target.checked));
+  if (e.target.id === 'efRepeat') $('#efUntilWrap').hidden = e.target.value === 'none';
+  if (e.target.id === 'efStart' && ($('#efEnd').value < e.target.value || !$('#efEnd').value)) $('#efEnd').value = e.target.value;
+  if (e.target.dataset.perm) savePerm(e.target);
 });
 root.addEventListener('input', (e) => { if (e.target.id === 'libQ') { S.libQ = e.target.value; render(); } });
 root.addEventListener('submit', async (e) => {
@@ -623,12 +881,7 @@ root.addEventListener('submit', async (e) => {
       else toast(`Annonce publiée et envoyée à ${n.data.sent} appareil${n.data.sent > 1 ? 's' : ''}`);
     }
   }
-  if (id === 'eventForm') {
-    e.preventDefault();
-    const r = await sb.from('events').insert({ date: $('#evDate').value, title: $('#evTitle').value.trim(), details: $('#evDetails').value.trim() || null }).select().single();
-    if (r.error) return fail(r.error);
-    S.events.push(r.data); S.events.sort((a, b) => a.date.localeCompare(b.date)); render(); toast('Date ajoutée');
-  }
+  if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
   if (id === 'addMember') {
     e.preventDefault();
     const row = { title: $('#nmTitle').value, first_name: $('#nmName').value.trim(), group_id: $('#nmGroup').value || null, pole_id: $('#nmPole').value || null, role: $('#nmRole').value };
@@ -639,6 +892,7 @@ root.addEventListener('submit', async (e) => {
     render(); toast('Personne ajoutée');
   }
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen)) { S.evModal = null; S.moreOpen = false; render(); } });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); } });
 ['dragover', 'dragenter'].forEach((t) => root.addEventListener(t, (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
 /* Appui long sur une réaction : affiche qui l'a mise (utile sur téléphone, où le survol n'existe pas) */
@@ -674,6 +928,7 @@ root.addEventListener('drop', (e) => { const d = e.target.closest('#drop'); if (
 
 /* ---------- Démarrage ---------- */
 async function boot() {
+  S.calDate = S.calSel = today();
   const { data } = await sb.auth.getSession();
   S.session = data.session;
   if (S.session) {
