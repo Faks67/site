@@ -45,7 +45,8 @@ const S = {
   reacts: {}, reactPicker: null, emojiOpen: false, push: 'inconnu',
   uploading: '', realtime: null,
   calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
-  mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null
+  mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null,
+  vitrine: null, vitrineBusy: false
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -141,6 +142,37 @@ async function loadThumbs() {
   (data || []).forEach((r) => { if (r.signedUrl) S.thumbs[r.path] = r.signedUrl; });
   if (['bibliotheque', 'accueil', 'poles'].includes(S.view)) render();
 }
+// Photo de l'accueil : rangée dans le stockage privé (dossier « vitrine »), jamais dans les fichiers publics du site.
+const VITRINE = 'vitrine';
+async function loadVitrine() {
+  const { data, error } = await sb.storage.from('documents').list(VITRINE, { limit: 20, sortBy: { column: 'created_at', order: 'desc' } });
+  if (error) return;
+  const f = (data || []).find((x) => x.id && /\.(png|webp|jpe?g)$/i.test(x.name));
+  const path = f ? `${VITRINE}/${f.name}` : null;
+  if (path === S.vitrine?.path) return;
+  let url = null;
+  if (path) { const r = await sb.storage.from('documents').createSignedUrl(path, 7 * 86400); if (r.error) return; url = r.data.signedUrl; }
+  S.vitrine = path ? { path, url, all: data.filter((x) => x.id).map((x) => `${VITRINE}/${x.name}`) } : null;
+  if (['accueil', 'administration'].includes(S.view) && !userBusy()) render();
+}
+async function setVitrine(file) {
+  if (!/^image\/(png|webp|jpeg)$/.test(file.type)) return toast('Choisissez une image PNG, WebP ou JPEG.');
+  if (file.size > 5 * 1024 * 1024) return toast('Image trop lourde (5 Mo maximum).');
+  S.vitrineBusy = true; render();
+  const old = S.vitrine?.all || [];
+  const path = `${VITRINE}/${Date.now()}.${file.type.split('/')[1].replace('jpeg', 'jpg')}`;
+  const { error } = await sb.storage.from('documents').upload(path, file, { contentType: file.type });
+  if (!error && old.length) await sb.storage.from('documents').remove(old);
+  S.vitrineBusy = false; S.vitrine = null;
+  if (error) { render(); return fail(error); }
+  await loadVitrine(); render(); toast("Photo de l'accueil mise à jour");
+}
+async function clearVitrine() {
+  if (!S.vitrine) return;
+  const { error } = await sb.storage.from('documents').remove(S.vitrine.all);
+  if (error) return fail(error);
+  S.vitrine = null; render(); toast("Photo de l'accueil retirée");
+}
 async function loadMessages(ch) {
   const sig = () => JSON.stringify([S.msgs[ch], (S.msgs[ch] || []).map((m) => S.reacts[m.id])]);
   const had = !!S.msgs[ch], before = sig();
@@ -197,6 +229,7 @@ async function refreshData() {
   const before = JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations]);
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
+  loadVitrine();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
   // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
@@ -286,11 +319,11 @@ function vAccueil() {
   const o = nextEvent(); const ev = o?.e; const nd = o ? parseD(o.start) : null;
   return `<div class="view">
   <div class="hero">
-    <div class="main"><span class="eyebrow" style="color:inherit;opacity:.85">Espace des chefs et cheftaines</span>
+    <div class="main${S.vitrine ? ' withphoto' : ''}"><span class="eyebrow" style="color:inherit;opacity:.85">Espace des chefs et cheftaines</span>
       <h1>Salam ${esc(display(S.me))} !</h1>
       <p>Retrouvez ici les documents officiels, les comptes rendus, les fiches d'activités et la pédagogie de l'unité, l'organigramme et les pôles.</p>
       <div class="row" style="margin-top:6px"><button class="btn" data-go="bibliotheque">${ico('up')} Déposer un document</button><button class="btn" data-go="discussion" style="background:transparent;color:inherit;border-color:currentColor">${ico('chat')} Discussion</button></div>
-      <img class="hands" src="assets/logo.png" alt="">
+      ${S.vitrine ? `<figure class="vitrine"><span class="vglow"></span><img src="${esc(S.vitrine.url)}" alt="Des enfants de l'unité fiers de leur plaque de cookies"></figure>` : '<img class="hands" src="assets/logo.png" alt="">'}
     </div>
     <div class="card next"><span class="eyebrow">Prochain rendez-vous</span>
       ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
@@ -802,6 +835,10 @@ function vAdmin() {
   <div><span class="eyebrow">${admin ? 'Réservé aux administrateurs' : 'Gestion des chefs et des groupes'}</span><h1>Administration</h1>
     <p class="lead" style="margin-top:6px">Ajoutez l'e-mail d'un chef pour lui donner accès : il pourra ensuite créer son compte depuis la page de connexion. Pour retirer un accès, effacez son e-mail ou retirez la personne.</p></div>
   ${storageGauge()}
+  ${admin ? `<div class="card vitrineadm"><div>${S.vitrine ? `<img src="${esc(S.vitrine.url)}" alt="">` : `<span>${ico('up')}</span>`}</div><div style="min-width:0"><h3>Photo de l'accueil</h3>
+    <p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Elle s'affiche en haut de l'accueil avec un effet animé. Une image détourée (PNG sans fond) rend le mieux. Elle reste privée : seuls les chefs connectés la voient.</p>
+    <div class="row"><label class="btn small${S.vitrineBusy ? ' disabled' : ''}">${ico('up')} ${S.vitrineBusy ? 'Envoi…' : S.vitrine ? 'Changer la photo' : 'Choisir une photo'}<input type="file" id="vitrineFile" accept="image/png,image/webp,image/jpeg" hidden ${S.vitrineBusy ? 'disabled' : ''}></label>
+    ${S.vitrine ? '<button class="btn small danger" data-vitrineclear>Retirer</button>' : ''}</div></div></div>` : ''}
   ${admin ? `<div class="card"><h3>Autorisations</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Cochez ce que chaque chef peut faire en plus de consulter, déposer des documents et écrire. Chaque case est enregistrée tout de suite. Seuls les administrateurs donnent des autorisations.</p>
     <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${PERMS.map(([k, l, d]) => `<th title="${esc(d)}">${esc(l)}<small>${esc(d)}</small></th>`).join('')}</tr></thead>
     <tbody>${S.members.map(permRow).join('')}</tbody></table></div></div>` : ''}
@@ -999,6 +1036,7 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-logout]')) { await sb.auth.signOut(); return; }
   const nv = t.closest('button[data-v]'); if (nv) return go(nv.dataset.v);
   if (t.closest('[data-more]')) { S.moreOpen = !S.moreOpen; return render(); }
+  if (t.closest('[data-vitrineclear]')) return clearVitrine();
   if (t.matches('[data-closemore]')) { S.moreOpen = false; return render(); }
   // Carte et adresses
   const ad = t.closest('[data-addr]'); if (ad) return addrPick(Number(ad.dataset.addr));
@@ -1101,6 +1139,7 @@ async function savePerm(box) {
 root.addEventListener('change', (e) => {
   if (e.target.id === 'upFile' && e.target.files.length) addFiles(e.target.files);
   if (e.target.id === 'upPole') S.upPole = e.target.value;
+  if (e.target.id === 'vitrineFile' && e.target.files[0]) setVitrine(e.target.files[0]);
   if (e.target.id === 'efAllDay') document.querySelectorAll('.timef').forEach((x) => (x.hidden = e.target.checked));
   if (e.target.id === 'efRepeat') $('#efUntilWrap').hidden = e.target.value === 'none';
   if (e.target.id === 'efStart' && ($('#efEnd').value < e.target.value || !$('#efEnd').value)) $('#efEnd').value = e.target.value;
@@ -1178,7 +1217,7 @@ async function boot() {
   S.session = data.session;
   if (S.session) {
     try { await loadAll(); lastRefresh = Date.now(); } catch (e) { fail(e); }
-    if (S.me) startRealtime();
+    if (S.me) { startRealtime(); loadVitrine(); }
   }
   const h = (location.hash || '').slice(1);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
