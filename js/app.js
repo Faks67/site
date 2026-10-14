@@ -32,6 +32,7 @@ const ICONS = {
   up: '<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>',
   out: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   pin: '<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  euro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M15 9.8a3.2 3.2 0 1 0 0 4.4M8.5 11.3h5M8.5 12.9h5"/>',
   more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -46,7 +47,8 @@ const S = {
   uploading: '', realtime: null,
   calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
   mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null,
-  vitrine: null, vitrineBusy: false
+  vitrine: null, vitrineBusy: false,
+  reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -59,10 +61,13 @@ const PERMS = [
   ['calendrier', 'Calendrier', 'Ajouter, modifier et supprimer les événements'],
   ['bibliotheque', 'Bibliothèque', "Supprimer n'importe quel document"],
   ['discussion', 'Discussion', "Supprimer n'importe quel message"],
-  ['membres', 'Chefs et groupes', "Ajouter et modifier les chefs, leurs e-mails d'accès et les groupes"]
+  ['membres', 'Chefs et groupes', "Ajouter et modifier les chefs, leurs e-mails d'accès et les groupes"],
+  ['reclamation', 'Réclamations', 'Demander le remboursement de ses achats'],
+  ['remboursement', 'Remboursements', 'Voir toutes les réclamations et valider les remboursements']
 ];
 const can = (p) => !!S.me && (S.me.is_admin || (S.me.permissions || []).includes(p));
 const canAdminPage = () => can('membres');
+const canRecl = () => can('reclamation') || can('remboursement');
 const ROLES = { principale: 'Cheffe principale', doyenne: 'Doyenne', chef: 'Chef / cheftaine', stagiaire: 'Stagiaire' };
 
 /* ---------- Connexion ---------- */
@@ -133,6 +138,9 @@ async function loadAll() {
   if (can('membres')) {
     const inv = await sb.from('invitations').select('*'); if (!inv.error) S.invitations = inv.data;
   }
+  if (canRecl()) {
+    const rc = await sb.from('reclamations').select('*').order('created_at', { ascending: false }); if (!rc.error) S.reclamations = rc.data;
+  } else S.reclamations = [];
   loadThumbs();
 }
 async function loadThumbs() {
@@ -221,12 +229,12 @@ let lastRefresh = 0, lastVersionCheck = 0, siteVersion = null, updateReady = fal
 function userBusy() {
   const a = document.activeElement;
   if (a && a.matches('input, textarea, select') && !['msgIn', 'libQ'].includes(a.id)) return true;
-  return !!S.uploading || S.evModal?.mode === 'edit' || S.moreOpen || !!S.reactPicker || S.emojiOpen;
+  return !!S.uploading || S.recBusy || S.evModal?.mode === 'edit' || S.moreOpen || !!S.reactPicker || S.emojiOpen;
 }
 async function refreshData() {
   if (!S.me || document.hidden || !navigator.onLine) return;
   lastRefresh = Date.now();
-  const before = JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations]);
+  const before = JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations, S.reclamations]);
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
   loadVitrine();
@@ -235,7 +243,7 @@ async function refreshData() {
   // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
   for (const ch in S.msgs) if (ch !== S.chan || S.view !== 'discussion') delete S.msgs[ch];
   if (S.view === 'discussion') await loadMessages(S.chan);
-  const changed = before !== JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations]);
+  const changed = before !== JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations, S.reclamations]);
   if (!changed || userBusy()) return;
   if (S.evModal?.mode === 'view') {
     const o = S.evModal.occ; const e = S.events.find((x) => x.id === o.e.id);
@@ -285,14 +293,14 @@ checkVersion();
 /* ---------- Navigation ---------- */
 const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
-  const items = NAV.concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span></button>`).join('')
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
 const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['localisation', 'Localisation', 'pin']];
 function tabbarHtml() {
-  const more = [['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
@@ -330,6 +338,7 @@ function vAccueil() {
       <button class="btn" data-go="calendrier" style="align-self:flex-start">${ico('cal')} Calendrier</button>
     </div>
   </div>
+  ${can('remboursement') && recPending().length ? `<button class="card recalert" data-go="reclamations" data-rectabgo="gestion">${ico('euro', 22)}<span><b>${recPending().length} réclamation${recPending().length > 1 ? 's' : ''} en attente</b> · ${euros(sumOf(recPending()))} à rembourser</span><span class="go">Voir →</span></button>` : ''}
   <div class="stats">
     <div class="stat"><b>${S.members.length}</b><span>chefs et cheftaines</span></div>
     <div class="stat"><b>${S.groups.length}</b><span>groupes</span></div>
@@ -859,6 +868,120 @@ function vAdmin() {
   </div>`;
 }
 
+/* ---------- Réclamations (remboursement des achats payés par les chefs) ---------- */
+const REC_STATUS = { en_attente: ['En attente', 'var(--c-yellow)'], rembourse: ['Remboursée', 'var(--green)'], refuse: ['Refusée', 'var(--c-red)'] };
+const euros = (n) => Number(n).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+const sumOf = (list) => list.reduce((t, r) => t + Number(r.amount), 0);
+const recPending = () => S.reclamations.filter((r) => r.status === 'en_attente');
+function recCard(r, manage) {
+  const [label, k] = REC_STATUS[r.status] || REC_STATUS.en_attente;
+  const by = member(r.member_id), g = grp(r.group_id), pb = member(r.processed_by), pending = r.status === 'en_attente';
+  return `<div class="card recl" style="--k:${k}">
+    <div class="rhead"><b class="amt">${euros(r.amount)}</b><span class="pill"><span class="dot" style="--k:${k}"></span>${label}</span></div>
+    ${manage ? (by ? chefChip(by) : '<div class="m">Ancien membre</div>') : ''}
+    <p class="rdesc">${esc(r.description)}</p>
+    <div class="m">Achat du ${fmtDate(r.purchase_date)}${g ? ' · ' + esc(g.name) : " · Toute l'unité"} · demandé le ${fmtDate(r.created_at)}</div>
+    ${pending ? '' : `<div class="rnote">${label}${r.processed_at ? ' le ' + fmtDate(r.processed_at) : ''}${pb ? ' par ' + esc(display(pb)) : ''}${r.admin_note ? ' : ' + esc(r.admin_note) : ''}</div>`}
+    <div class="row">${r.receipt_path ? `<button class="btn small" data-recreceipt="${r.id}">Voir le justificatif</button>` : '<span class="m">Pas de justificatif</span>'}
+      ${!manage && pending && r.member_id === S.me.id ? `<button class="btn small danger" data-recdel="${r.id}">Annuler la demande</button>` : ''}
+      ${manage && !pending ? `<button class="btn small" data-recreset="${r.id}">Remettre en attente</button>` : ''}</div>
+    ${manage && pending ? `<div class="rproc"><label class="field" for="note-${r.id}">Note (obligatoire pour un refus)<input id="note-${r.id}" maxlength="500" placeholder="Ex. virement du 14/10, espèces…"></label>
+      <div class="row"><button class="btn small primary" data-recset="rembourse" data-recid="${r.id}">✓ Marquer remboursée</button><button class="btn small danger" data-recset="refuse" data-recid="${r.id}">Refuser</button></div></div>` : ''}
+  </div>`;
+}
+function recMine() {
+  const mine = S.reclamations.filter((r) => r.member_id === S.me.id);
+  const wait = mine.filter((r) => r.status === 'en_attente');
+  return `<form class="card recform" id="recForm" novalidate><h3>Nouvelle réclamation</h3>
+    <div class="formrow">
+      <label class="field" for="rcAmount">Montant (€)<input id="rcAmount" inputmode="decimal" autocomplete="off" required placeholder="Ex. 12,50"></label>
+      <label class="field" for="rcDate">Date de l'achat<input id="rcDate" type="date" required max="${today()}" value="${today()}"></label>
+      <label class="field" for="rcGroup">Pour<select id="rcGroup"><option value="">Toute l'unité</option>${S.groups.map((g) => `<option value="${g.id}" ${g.id === S.me.group_id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
+    </div>
+    <label class="field" for="rcDesc">Description<textarea id="rcDesc" required maxlength="1000" placeholder="Ce qui a été acheté, où, et pour quelle activité. Ex. goûter et matériel de bricolage pour le samedi scout du 7 novembre (Carrefour)."></textarea></label>
+    <label class="field" for="rcFile">Justificatif : photo du ticket de caisse ou facture (recommandé)<input id="rcFile" type="file" accept="image/*,application/pdf"></label>
+    <p class="err" id="rcErr" role="alert" hidden></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Envoyer la réclamation</button></div>
+  </form>
+  <div class="row" style="justify-content:space-between"><h3>Mes réclamations</h3>${wait.length ? `<span class="pill">${euros(sumOf(wait))} en attente de remboursement</span>` : ''}</div>
+  ${mine.length ? `<div class="recs">${mine.map((r) => recCard(r, false)).join('')}</div>` : '<div class="empty">Aucune réclamation pour le moment.</div>'}`;
+}
+function recManage() {
+  const all = S.reclamations, by = (st) => all.filter((r) => r.status === st);
+  const F = [['en_attente', 'En attente'], ['rembourse', 'Remboursées'], ['refuse', 'Refusées'], ['all', 'Toutes']];
+  // En attente : la plus ancienne en premier, comme une file d'attente
+  const list = S.recFilter === 'all' ? all : S.recFilter === 'en_attente' ? by('en_attente').reverse() : by(S.recFilter);
+  return `<div class="stats recstats">
+    <div class="stat"><b>${by('en_attente').length}</b><span>en attente</span></div>
+    <div class="stat"><b>${euros(sumOf(by('en_attente')))}</b><span>à rembourser</span></div>
+    <div class="stat"><b>${euros(sumOf(by('rembourse')))}</b><span>déjà remboursés</span></div>
+    <div class="stat"><b>${all.length}</b><span>réclamation${all.length > 1 ? 's' : ''} au total</span></div>
+  </div>
+  <div class="chips">${F.map(([k, l]) => `<button data-recfilter="${k}" aria-pressed="${S.recFilter === k}">${l} (${k === 'all' ? all.length : by(k).length})</button>`).join('')}</div>
+  ${list.length ? `<div class="recs">${list.map((r) => recCard(r, true)).join('')}</div>` : `<div class="empty">${S.recFilter === 'en_attente' ? 'Aucune réclamation en attente : tout est remboursé.' : 'Aucune réclamation ici.'}</div>`}`;
+}
+function vRecl() {
+  if (!canRecl()) return '<div class="view"><div class="empty">Page réservée aux personnes autorisées par un administrateur.</div></div>';
+  const both = can('reclamation') && can('remboursement');
+  const tab = !can('remboursement') ? 'mes' : !can('reclamation') ? 'gestion' : S.recTab;
+  const n = recPending().length;
+  return `<div class="view">
+  <div><span class="eyebrow">Remboursement des achats</span><h1>Réclamations</h1>
+    <p class="lead" style="margin-top:6px">${tab === 'mes' ? "Vous avez payé de votre poche un achat pour l'unité ? Faites votre demande ici avec le ticket de caisse, et suivez son statut jusqu'au remboursement." : 'Toutes les demandes de remboursement des chefs et cheftaines. Une fois le remboursement fait, marquez la réclamation comme remboursée : la personne le voit tout de suite.'}</p></div>
+  ${both ? `<div><div class="seg" role="group" aria-label="Affichage"><button data-rectab="mes" aria-pressed="${tab === 'mes'}">Mes réclamations</button><button data-rectab="gestion" aria-pressed="${tab === 'gestion'}">Toutes${n ? ` (${n} en attente)` : ''}</button></div></div>` : ''}
+  ${tab === 'mes' ? recMine() : recManage()}
+  </div>`;
+}
+async function submitRecl(form) {
+  const err = (t) => { const el = $('#rcErr'); el.textContent = t; el.hidden = false; };
+  const raw = $('#rcAmount').value.replace(/[\s€]/g, '').replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(raw) || Number(raw) <= 0) return err('Indiquez un montant valide, par exemple 12,50.');
+  if (Number(raw) >= 100000) return err('Ce montant est trop élevé.');
+  const date = $('#rcDate').value;
+  if (!date) return err("Indiquez la date de l'achat.");
+  if (date > today()) return err("La date de l'achat ne peut pas être dans le futur.");
+  const description = $('#rcDesc').value.trim();
+  if (!description) return err('Décrivez ce qui a été acheté et pour quelle activité.');
+  const f0 = $('#rcFile').files[0];
+  $('#rcErr').hidden = true;
+  const btn = form.querySelector('[type=submit]'); btn.disabled = true; btn.textContent = 'Envoi…'; S.recBusy = true;
+  let path = null;
+  try {
+    if (f0) {
+      const f = await compressImage(f0);
+      if (f.size > 10 * 1048576) throw new Error('le justificatif dépasse 10 Mo');
+      const ext = (f.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'jpg';
+      path = `${S.session.user.id}/${crypto.randomUUID()}.${ext}`;
+      const up = await sb.storage.from('justificatifs').upload(path, f, { contentType: f.type || undefined });
+      if (up.error) { path = null; throw up.error; }
+    }
+    const r = await sb.from('reclamations').insert({ member_id: S.me.id, amount: Number(raw), purchase_date: date, description, group_id: $('#rcGroup').value || null, receipt_path: path }).select().single();
+    if (r.error) throw r.error;
+    S.reclamations.unshift(r.data); S.recBusy = false; render(); toast('Réclamation envoyée');
+  } catch (e) {
+    console.error(e);
+    if (path) await sb.storage.from('justificatifs').remove([path]);
+    S.recBusy = false; btn.disabled = false; btn.textContent = 'Envoyer la réclamation';
+    err('Erreur : ' + (e?.message || "la réclamation n'a pas pu être envoyée"));
+  }
+}
+async function setRecStatus(id, status) {
+  const r0 = S.reclamations.find((x) => x.id === id); if (!r0) return;
+  const note = status === 'en_attente' ? null : $('#note-' + id)?.value.trim() || null;
+  if (status === 'refuse' && !note) { toast('Indiquez la raison du refus dans la note.'); $('#note-' + id)?.focus(); return; }
+  const r = await sb.from('reclamations').update({ status, admin_note: note }).eq('id', id).select().single();
+  if (r.error) return fail(r.error);
+  Object.assign(r0, r.data); render();
+  toast({ rembourse: 'Réclamation marquée remboursée', refuse: 'Réclamation refusée', en_attente: 'Réclamation remise en attente' }[status]);
+}
+async function openReceipt(id) {
+  const r0 = S.reclamations.find((x) => x.id === id); if (!r0?.receipt_path) return;
+  const w = window.open('', '_blank');
+  const { data, error } = await sb.storage.from('justificatifs').createSignedUrl(r0.receipt_path, 3600);
+  if (error) { w?.close(); return fail(error); }
+  if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
+}
+
 /* ---------- Adresses (Base Adresse Nationale) et carte des activités ---------- */
 const hasCoords = (e) => e && e.lat != null && e.lng != null;
 const evGroups = (e) => (e.group_ids || []).map(grp).filter(Boolean);
@@ -1013,7 +1136,7 @@ function render() {
     root.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="assets/logo.png" alt=""><h2>Accès en attente</h2></div><p>Votre compte (${esc(S.session.user.email)}) n'est relié à aucun chef ou cheftaine. Demandez à un administrateur d'ajouter cette adresse dans la page Administration, puis reconnectez-vous.</p><button class="btn block" data-logout>Se déconnecter</button></div></div>`;
     return;
   }
-  const V = { localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
+  const V = { reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
   root.innerHTML = `<div class="app"><aside class="side">
@@ -1062,7 +1185,20 @@ root.addEventListener('click', async (e) => {
   });
   const sl = t.closest('[data-slot]'); if (sl && can('calendrier')) { const [d, h] = sl.dataset.slot.split('|'); S.evModal = { mode: 'edit', ev: newEventDraft(d, Number(h)) }; render(); $('#efTitle')?.focus(); return; }
   const cd = t.closest('[data-calday]'); if (cd) { if (S.calView === 'mois') { S.calSel = cd.dataset.calday; return render(); } if (can('calendrier')) { S.evModal = { mode: 'edit', ev: newEventDraft(cd.dataset.calday) }; render(); $('#efTitle')?.focus(); } return; }
-  const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; return go(g.dataset.go); }
+  // Réclamations
+  const rt = t.closest('[data-rectab]'); if (rt) { S.recTab = rt.dataset.rectab; return render(); }
+  const rf = t.closest('[data-recfilter]'); if (rf) { S.recFilter = rf.dataset.recfilter; return render(); }
+  const rr = t.closest('[data-recreceipt]'); if (rr) return openReceipt(rr.dataset.recreceipt);
+  const rs = t.closest('[data-recset]'); if (rs) return setRecStatus(rs.dataset.recid, rs.dataset.recset);
+  const rz = t.closest('[data-recreset]'); if (rz) return confirmThen(rz, 'Confirmer', () => setRecStatus(rz.dataset.recreset, 'en_attente'));
+  const rd = t.closest('[data-recdel]'); if (rd) return confirmThen(rd, "Confirmer l'annulation", async () => {
+    const r0 = S.reclamations.find((x) => x.id === rd.dataset.recdel); if (!r0) return;
+    const r = await sb.from('reclamations').delete().eq('id', r0.id).select(); if (r.error) return fail(r.error);
+    if (!r.data.length) { toast('Cette réclamation vient d\'être traitée : elle ne peut plus être annulée.'); return refreshData(); }
+    if (r0.receipt_path) await sb.storage.from('justificatifs').remove([r0.receipt_path]);
+    S.reclamations = S.reclamations.filter((x) => x.id !== r0.id); render(); toast('Réclamation annulée');
+  });
+  const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; if (g.dataset.rectabgo) { S.recTab = g.dataset.rectabgo; S.recFilter = 'en_attente'; } return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
   const ch = t.closest('[data-chan]'); if (ch) { S.chan = ch.dataset.chan; S.emojiOpen = false; S.reactPicker = null; if (!S.msgs[S.chan]) loadMessages(S.chan); return render(); }
@@ -1165,6 +1301,7 @@ root.addEventListener('submit', async (e) => {
     }
   }
   if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
+  if (id === 'recForm') { e.preventDefault(); if (!S.recBusy) submitRecl(e.target); return; }
   if (id === 'addMember') {
     e.preventDefault();
     const row = { title: $('#nmTitle').value, first_name: $('#nmName').value.trim(), group_id: $('#nmGroup').value || null, pole_id: $('#nmPole').value || null, role: $('#nmRole').value };
@@ -1221,7 +1358,7 @@ async function boot() {
   }
   const h = (location.hash || '').slice(1);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
-  else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration'].includes(h)) S.view = h;
+  else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
   if (S.me) checkPush().then(() => { if (S.view === 'discussion') render(); });
   if (S.view === 'discussion' && S.me) loadMessages(S.chan);
   render();
