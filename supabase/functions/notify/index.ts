@@ -1,6 +1,8 @@
-// Fonction Supabase « notify » : envoie une notification sur les téléphones
-// des chefs et cheftaines quand un message est publié dans un canal qu'ils suivent
-// (choix fait dans le site avec le bouton cloche ; par défaut : les annonces seulement).
+// Fonction Supabase « notify » : envoie une notification sur les téléphones des chefs et cheftaines
+// - quand un message est publié dans un canal qu'ils suivent (choix fait dans le site avec le bouton cloche ;
+//   par défaut : les annonces seulement) ;
+// - 10 minutes avant Fajr, Dhuhr et Maghrib pour ceux qui ont coché « Heures de prière »
+//   (appel automatique toutes les 5 minutes par la tâche programmée de la mise à jour SQL 08).
 //
 // À créer dans Supabase : Edge Functions > Deploy a new function > Via Editor,
 // nom « notify », coller ce fichier, puis Deploy.
@@ -10,6 +12,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 import webpush from 'npm:web-push@3.6.7';
 
 const SITE_URL = 'https://faks67.github.io/site/';
+const TIME_ZONE = 'Europe/Paris';
+const PRAYER_LEAD_MIN = 10;
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -23,7 +27,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 // deno-lint-ignore no-explicit-any
-async function vapidKeys(admin: any) {
+type Db = any;
+
+async function vapidKeys(admin: Db) {
   const { data } = await admin.from('app_secrets').select('key, value').in('key', ['vapid_public', 'vapid_private']);
   const pub = data?.find((r: { key: string }) => r.key === 'vapid_public')?.value;
   const priv = data?.find((r: { key: string }) => r.key === 'vapid_private')?.value;
@@ -41,12 +47,130 @@ async function vapidKeys(admin: any) {
   return { publicKey: p2, privateKey: k2 };
 }
 
+type Sub = { endpoint: string; p256dh: string; auth: string; member_id: string };
+// Envoie à chaque appareil ; les abonnements expirés sont supprimés
+async function sendAll(admin: Db, subs: Sub[], payload: string, ttl = 86400) {
+  let sent = 0;
+  const expired: string[] = [];
+  await Promise.all(subs.map(async (s) => {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: ttl, urgency: 'high' });
+      sent++;
+    } catch (e) {
+      const code = (e as { statusCode?: number }).statusCode;
+      if (code === 404 || code === 410) expired.push(s.endpoint);
+      else console.error('envoi impossible', code, (e as Error).message);
+    }
+  }));
+  if (expired.length) await admin.from('push_subscriptions').delete().in('endpoint', expired);
+  return sent;
+}
+// Appareils des chefs qui suivent ce canal (sans choix enregistré : les annonces)
+async function followers(admin: Db, channel: string, exceptMember?: string): Promise<Sub[]> {
+  let q = admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id');
+  if (exceptMember) q = q.neq('member_id', exceptMember);
+  const { data: all } = await q;
+  const { data: prefs } = await admin.from('notif_prefs').select('member_id, channels');
+  const follows = new Map((prefs || []).map((p: { member_id: string; channels: string[] }) => [p.member_id, p.channels]));
+  return (all || []).filter((s: Sub) => (follows.get(s.member_id) ?? ['annonces']).includes(channel));
+}
+
+/* ---------- Heures de prière : même calcul que js/prieres.js (méthode Jafari) ---------- */
+const rad = (d: number) => (d * Math.PI) / 180, deg = (r: number) => (r * 180) / Math.PI;
+const dsin = (d: number) => Math.sin(rad(d)), dcos = (d: number) => Math.cos(rad(d)), dtan = (d: number) => Math.tan(rad(d));
+const darcsin = (x: number) => deg(Math.asin(x)), darccos = (x: number) => deg(Math.acos(x));
+const darctan2 = (y: number, x: number) => deg(Math.atan2(y, x)), darccot = (x: number) => deg(Math.atan(1 / x));
+const fix = (a: number, b: number) => { a -= b * Math.floor(a / b); return a < 0 ? a + b : a; };
+const diff = (a: number, b: number) => fix(b - a, 24);
+function julian(y: number, m: number, d: number) {
+  if (m <= 2) { y -= 1; m += 12; }
+  const A = Math.floor(y / 100), B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5;
+}
+function sun(jd: number) {
+  const D = jd - 2451545.0;
+  const g = fix(357.529 + 0.98560028 * D, 360), q = fix(280.459 + 0.98564736 * D, 360);
+  const L = fix(q + 1.915 * dsin(g) + 0.02 * dsin(2 * g), 360), e = 23.439 - 0.00000036 * D;
+  const RA = darctan2(dcos(e) * dsin(L), dcos(L)) / 15;
+  return { decl: darcsin(dsin(e) * dsin(L)), eqt: q / 15 - fix(RA, 24) };
+}
+function prayerTimes(y: number, m: number, d: number, lat: number, lng: number): Record<string, Date> {
+  const jDate = julian(y, m, d) - lng / (15 * 24);
+  const midDay = (t: number) => fix(12 - sun(jDate + t).eqt, 24);
+  const angleTime = (a: number, t: number, ccw = false) => {
+    const decl = sun(jDate + t).decl;
+    const v = (1 / 15) * darccos((-dsin(a) - dsin(decl) * dsin(lat)) / (dcos(decl) * dcos(lat)));
+    return midDay(t) + (ccw ? -v : v);
+  };
+  let h: Record<string, number> = { fajr: 5, sunrise: 6, dhuhr: 12, sunset: 18, maghrib: 18 };
+  for (let i = 0; i < 2; i++) {
+    const t = (k: string) => h[k] / 24;
+    h = { fajr: angleTime(16, t('fajr'), true), sunrise: angleTime(0.833, t('sunrise'), true), dhuhr: midDay(t('dhuhr')),
+      sunset: angleTime(0.833, t('sunset')), maghrib: angleTime(4, t('maghrib')) };
+  }
+  for (const k in h) h[k] -= lng / 15;
+  const night = diff(h.sunset, h.sunrise);
+  const cap = (k: string, a: number, ccw: boolean) => {
+    const max = (a / 60) * night, base = ccw ? h.sunrise : h.sunset;
+    if (isNaN(h[k]) || (ccw ? diff(h[k], base) : diff(base, h[k])) > max) h[k] = base + (ccw ? -max : max);
+  };
+  cap('fajr', 16, true); cap('maghrib', 4, false);
+  const base = Date.UTC(y, m - 1, d), out: Record<string, Date> = {};
+  for (const k of ['fajr', 'dhuhr', 'maghrib']) out[k] = new Date(base + Math.round(h[k] * 60) * 60000);
+  return out;
+}
+const PRAYER_NAMES: Record<string, string> = { fajr: 'Fajr', dhuhr: 'Dhuhr', maghrib: 'Maghrib' };
+const DEFAULT_PLACE = { name: 'Paris', lat: 48.8566, lng: 2.3522 };
+
+// Appelée toutes les 5 minutes : prévient 10 minutes avant chaque prière, une seule fois
+async function prayerAlerts(admin: Db) {
+  const { data: st } = await admin.from('app_settings').select('value').eq('key', 'prayer_place').maybeSingle();
+  const place = st?.value?.lat != null ? st.value : DEFAULT_PLACE;
+  const now = Date.now();
+  const due: { day: string; key: string; at: Date }[] = [];
+  for (const off of [-1, 0, 1]) {
+    const d = new Date(now + off * 86400000), y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, dd = d.getUTCDate();
+    const t = prayerTimes(y, m, dd, place.lat, place.lng);
+    for (const k in t) {
+      const alertAt = t[k].getTime() - PRAYER_LEAD_MIN * 60000;
+      // Fenêtre un peu plus large que 5 minutes pour ne rien rater si un appel a du retard
+      if (alertAt <= now && alertAt > now - 9 * 60000) due.push({ day: `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`, key: k, at: t[k] });
+    }
+  }
+  let sent = 0;
+  for (const p of due) {
+    const { data: fresh } = await admin.from('prayer_sent').upsert({ day: p.day, prayer: p.key }, { onConflict: 'day,prayer', ignoreDuplicates: true }).select();
+    if (!fresh?.length) continue; // déjà annoncée
+    const subs = await followers(admin, 'prieres');
+    if (!subs.length) continue;
+    const hhmm = p.at.toLocaleTimeString('fr-FR', { timeZone: TIME_ZONE, hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+    sent += await sendAll(admin, subs, JSON.stringify({
+      title: `🕌 ${PRAYER_NAMES[p.key]} à ${hhmm}`,
+      body: `Dans ${PRAYER_LEAD_MIN} minutes · ${place.name}`,
+      url: SITE_URL + '#prieres',
+      tag: 'priere',
+      renotify: true
+    }), 3600);
+  }
+  return { due: due.length, sent };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const body = await req.json().catch(() => ({}));
 
-    // Seuls les chefs et cheftaines connectés peuvent utiliser la fonction
+    // Tâche programmée (heures de prière) : reconnue grâce à sa clé secrète
+    if (body.action === 'prayers') {
+      const { data: k } = await admin.from('app_secrets').select('value').eq('key', 'cron_key').maybeSingle();
+      if (!k?.value || req.headers.get('x-cron-key') !== k.value) return json({ error: 'accès refusé' }, 403);
+      const keys = await vapidKeys(admin);
+      webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
+      return json(await prayerAlerts(admin));
+    }
+
+    // Sinon : seuls les chefs et cheftaines connectés peuvent utiliser la fonction
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const { data: auth } = await admin.auth.getUser(token);
     if (!auth?.user) return json({ error: 'non connecté' }, 401);
@@ -54,8 +178,6 @@ Deno.serve(async (req) => {
     if (!me) return json({ error: 'accès refusé' }, 403);
 
     const keys = await vapidKeys(admin);
-    const body = await req.json().catch(() => ({}));
-
     if (body.action === 'key') return json({ publicKey: keys.publicKey });
 
     if (body.action === 'notify') {
@@ -63,35 +185,17 @@ Deno.serve(async (req) => {
       if (!msg || msg.member_id !== me.id) return json({ error: 'message introuvable' }, 400);
 
       webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
-      const { data: all } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').neq('member_id', me.id);
-      // Canaux suivis par chaque chef (sans choix enregistré : les annonces)
-      const { data: prefs } = await admin.from('notif_prefs').select('member_id, channels');
-      const follows = new Map((prefs || []).map((p: { member_id: string; channels: string[] }) => [p.member_id, p.channels]));
-      const subs = (all || []).filter((s: { member_id: string }) => (follows.get(s.member_id) ?? ['annonces']).includes(msg.channel));
+      const subs = await followers(admin, msg.channel, me.id);
       const isAnnonce = msg.channel === 'annonces';
-      const payload = JSON.stringify({
+      const sent = await sendAll(admin, subs, JSON.stringify({
         title: isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: msg.body.length > 180 ? msg.body.slice(0, 177) + '…' : msg.body,
         url: SITE_URL + (isAnnonce ? '#annonces' : '#chat-' + msg.channel),
         // Une notification par annonce ; pour les autres canaux, la dernière remplace la précédente
         tag: isAnnonce ? 'annonce-' + msg.id : 'chat-' + msg.channel,
         renotify: !isAnnonce
-      });
-
-      let sent = 0;
-      const expired: string[] = [];
-      await Promise.all((subs || []).map(async (s: { endpoint: string; p256dh: string; auth: string }) => {
-        try {
-          await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 86400, urgency: 'high' });
-          sent++;
-        } catch (e) {
-          const code = (e as { statusCode?: number }).statusCode;
-          if (code === 404 || code === 410) expired.push(s.endpoint);
-          else console.error('envoi impossible', code, (e as Error).message);
-        }
       }));
-      if (expired.length) await admin.from('push_subscriptions').delete().in('endpoint', expired);
-      return json({ sent, total: subs?.length || 0 });
+      return json({ sent, total: subs.length });
     }
 
     return json({ error: 'action inconnue' }, 400);
