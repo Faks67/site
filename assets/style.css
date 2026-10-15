@@ -506,10 +506,10 @@ body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
   .hero .main .herotxt,.hero .main .herobtns{display:none}
   .hero .main .eyebrow{font-size:.68rem}
   .hands{width:96px;right:-10px;bottom:-18px}
-  /* La photo sort du bandeau par le haut : plus grande et nette */
-  .hero:has(.withphoto){margin-top:46px}
-  .hero .main.withphoto{overflow:visible;padding-right:170px;min-height:104px;padding-bottom:16px}
-  .vitrine{position:absolute;inset:-58px -6px 0 auto;width:178px;height:auto;margin:0;align-self:auto;z-index:1}
+  /* La photo dépasse du bandeau en haut et en bas (un peu plus en bas), sans être coupée */
+  .hero:has(.withphoto){margin-top:26px}
+  .hero .main.withphoto{overflow:visible;padding-right:170px;min-height:104px;padding-bottom:16px;margin-bottom:22px}
+  .vitrine{position:absolute;inset:-24px -6px -36px auto;width:178px;height:auto;margin:0;align-self:auto;align-items:center;z-index:1}
   .vitrine img{max-height:100%}
   .vglow{width:90%;bottom:8%}
 }
