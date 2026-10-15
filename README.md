@@ -54,6 +54,15 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 2. **Clé GIPHY** (gratuite) : sur [developers.giphy.com](https://developers.giphy.com/), *Create an App* > *API*, puis copier la clé dans `GIPHY_KEY` du fichier `js/config.js`.
 3. Dans la discussion : appui long sur un message pour réagir, répondre, copier ou supprimer ; glisser un message vers la droite pour y répondre.
 
+## Mise à jour 8 : heures de prière
+
+Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/prieres.js` : rien n'est stocké.
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/08-prieres.sql` et cliquer sur *Run*. Si Supabase signale que `pg_cron` ou `pg_net` n'est pas disponible, les activer dans *Database > Extensions*, puis relancer le script.
+2. **Fonction d'envoi des notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*.
+3. **Lieu de l'unité** : un administrateur ouvre la carte « Prochaine prière » de l'accueil et cherche l'adresse de référence (Paris par défaut).
+4. **Notifications** : chacun coche « Heures de prière » avec la cloche pour être prévenu 10 minutes avant Fajr, Dhuhr et Maghrib.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

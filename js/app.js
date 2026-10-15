@@ -2,6 +2,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import * as CFG from './config.js';
 const { SUPABASE_URL, SUPABASE_KEY } = CFG;
 import { POLE_CONTENT, CATS, CHANNELS, VALUES, QUICK_REACTIONS, EMOJIS } from './data.js';
+import { prayerTimes, PRAYERS } from './prieres.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -150,12 +151,14 @@ async function loadAll() {
     const rc = await sb.from('reclamations').select('*').order('created_at', { ascending: false }); if (!rc.error) S.reclamations = rc.data;
   } else S.reclamations = [];
   // Mise à jour 6 : en cas d'erreur (script SQL pas encore lancé), on garde les valeurs précédentes
-  const [ab, np] = await Promise.all([
+  const [ab, np, pp] = await Promise.all([
     sb.from('event_absences').select('event_id, occ_date, member_id').gte('occ_date', addDays(today(), -62)),
-    S.me ? sb.from('notif_prefs').select('channels').eq('member_id', S.me.id).maybeSingle() : null
+    S.me ? sb.from('notif_prefs').select('channels').eq('member_id', S.me.id).maybeSingle() : null,
+    sb.from('app_settings').select('value').eq('key', 'prayer_place').maybeSingle()
   ]);
   if (!ab.error) S.absences = ab.data;
   if (np && !np.error) S.notifCh = np.data ? np.data.channels : ['annonces'];
+  if (!pp.error) S.prayerPlace = pp.data?.value?.lat != null ? pp.data.value : null;
   loadThumbs();
 }
 // Message clair quand une table de la mise à jour 6 manque encore dans Supabase
@@ -270,7 +273,7 @@ function paintBadges() {
 // la discussion se reconnecte si le téléphone l'a coupée, et une nouvelle version du site s'installe toute seule.
 const REFRESH_MS = 30000;
 const VERSION_MS = 120000;
-const VERSION_FILES = ['index.html', 'js/app.js', 'js/data.js', 'js/config.js', 'assets/style.css'];
+const VERSION_FILES = ['index.html', 'js/app.js', 'js/data.js', 'js/config.js', 'js/prieres.js', 'assets/style.css'];
 let lastRefresh = 0, lastVersionCheck = 0, siteVersion = null, updateReady = false;
 // Quelqu'un est en train d'écrire ou d'envoyer : on ne redessine pas la page sous ses doigts.
 function userBusy() {
@@ -433,6 +436,87 @@ function nextDay() {
   return { day, occs, absents: [...absents.values()], sorties, groups: S.groups.filter((g) => gids.has(g.id)) };
 }
 
+/* ---------- Heures de prière (calculées dans le téléphone, méthode Jafari) ---------- */
+const DEFAULT_PLACE = { name: 'Paris', lat: 48.8566, lng: 2.3522 };
+const store = { get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+const unitPlace = () => S.prayerPlace || DEFAULT_PLACE;
+// Lieu affiché : celui de l'unité, ou la position du téléphone (gardée sur cet appareil seulement)
+const prayPlace = () => (store.get('prayUseMe') && store.get('prayMyPos')) || unitPlace();
+const fmtT = (d) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+const SHOWN = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+const PNAME = Object.fromEntries(PRAYERS);
+function timesOn(day, place) { const [y, m, d] = day.split('-').map(Number); return prayerTimes(y, m, d, place.lat, place.lng); }
+function nextPrayer(place) {
+  const now = Date.now();
+  for (const day of [today(), addDays(today(), 1)]) {
+    const t = timesOn(day, place);
+    for (const k of SHOWN) if (t[k].getTime() > now) return { k, at: t[k] };
+  }
+  return null;
+}
+function untilTxt(at) {
+  const min = Math.max(0, Math.round((at - Date.now()) / 60000));
+  if (min < 1) return 'maintenant';
+  return 'dans ' + (min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}` : `${min} min`);
+}
+function prayCard() {
+  const pl = prayPlace(), n = nextPrayer(pl); if (!n) return '';
+  return `<button class="card praycard" data-prayers aria-label="Heures de prière"><span class="pico">🕌</span>
+    <span class="pmain"><small>Prochaine prière · ${esc(pl.name)}</small><b>${PNAME[n.k]} · ${fmtT(n.at)}</b></span>
+    <span class="pin" data-praycount="${n.at.getTime()}">${untilTxt(n.at)}</span></button>`;
+}
+// Horaires d'un jour à l'adresse d'un événement (calendrier)
+function prayLine(day, place) {
+  const t = timesOn(day, place);
+  return `<p class="prayline">🕌 <span>Prières ce jour-là : ${['fajr', 'dhuhr', 'maghrib'].map((k) => `${PNAME[k]} <b>${fmtT(t[k])}</b>`).join(' · ')}</span></p>`;
+}
+function praySheet() {
+  const pl = prayPlace(), useMe = !!(store.get('prayUseMe') && store.get('prayMyPos'));
+  const t = timesOn(today(), pl), n = nextPrayer(pl), now = Date.now();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today(), i + 1));
+  return `<div class="modal" data-closemodal><div class="card sheet praysheet" role="dialog" aria-modal="true" aria-labelledby="prTitle">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div><span class="eyebrow">Méthode Jafari · ${esc(pl.name)}</span><h2 id="prTitle" style="margin-top:4px">Heures de prière</h2></div><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <div class="seg prayseg" role="group" aria-label="Lieu"><button data-prayuse="unite" aria-pressed="${!useMe}">${esc(unitPlace().name)}</button><button data-prayuse="moi" aria-pressed="${useMe}">📍 Ma position</button></div>
+    <div class="praylist">${PRAYERS.map(([k, l]) => `<div class="prow${n?.k === k && t[k].getTime() === n.at.getTime() ? ' next' : ''}${t[k] < now ? ' past' : ''}${SHOWN.includes(k) ? '' : ' minor'}"><span>${l}</span><b>${fmtT(t[k])}</b></div>`).join('')}</div>
+    <div class="tablewrap"><table class="praytable"><thead><tr><th></th>${SHOWN.map((k) => `<th>${PNAME[k]}</th>`).join('')}</tr></thead>
+      <tbody>${days.map((d) => { const x = timesOn(d, pl); return `<tr><td>${esc(cap(parseD(d).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' })))}</td>${SHOWN.map((k) => `<td>${fmtT(x[k])}</td>`).join('')}</tr>`; }).join('')}</tbody></table></div>
+    <small class="hint">Minuit : milieu entre le coucher du soleil et Fajr. Imsak : 10 minutes avant Fajr. Pour être prévenu·e avant Fajr, Dhuhr et Maghrib, activez « Heures de prière » avec la cloche.</small>
+    ${S.me.is_admin ? `<div class="presbox"><b>Lieu de l'unité</b><small class="hint">Actuellement : ${esc(unitPlace().name)}${S.prayerPlace ? '' : ' (par défaut)'}. Il sert à tous les chefs et aux notifications.</small>
+      <form class="row" id="ppForm" style="flex-wrap:nowrap"><input id="ppQ" type="search" placeholder="Adresse de la Housseynia, ville…" autocomplete="off" style="flex:1;min-width:0;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface)"><button class="btn small" type="submit">Chercher</button></form>
+      ${S.ppResults?.length ? `<div class="sheetlist">${S.ppResults.map((a, i) => `<button class="mapitem" data-ppset="${i}"><span class="mpin" style="--pin:var(--green)"></span><span><b>${esc(a.label)}</b><small>${esc(a.ctx || '')}</small></span></button>`).join('')}</div>` : ''}</div>` : ''}
+  </div></div>`;
+}
+async function useMyPosition() {
+  if (!navigator.geolocation) return toast('La position n\'est pas disponible sur cet appareil.');
+  toast('Recherche de votre position…');
+  navigator.geolocation.getCurrentPosition((p) => {
+    store.set('prayMyPos', { name: 'Ma position', lat: +p.coords.latitude.toFixed(3), lng: +p.coords.longitude.toFixed(3) });
+    store.set('prayUseMe', true); render();
+  }, () => toast('Position refusée ou introuvable. Autorisez la localisation pour ce site.'), { enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 });
+}
+async function searchPrayPlace(q) {
+  if (q.trim().length < 3) return toast('Tapez au moins 3 caractères.');
+  try {
+    const j = await (await fetch(`${GEOCODER}?q=${encodeURIComponent(q)}&limit=5&lat=48.85&lon=2.35`)).json();
+    S.ppResults = (j.features || []).map((f) => ({ label: f.properties.label, ctx: f.properties.context, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] }));
+    if (!S.ppResults.length) toast('Aucune adresse trouvée.');
+  } catch (e) { toast('Recherche d\'adresse indisponible pour le moment.'); }
+  render();
+}
+async function setPrayPlace(a) {
+  const value = { name: a.label.split(/\s\d{5}\s/)[1] || a.label, lat: +a.lat.toFixed(4), lng: +a.lng.toFixed(4), address: a.label };
+  const r = await sb.from('app_settings').upsert({ key: 'prayer_place', value, updated_at: new Date().toISOString() });
+  if (r.error) return fail(['42P01', 'PGRST205'].includes(r.error.code) ? new Error('lancez d\'abord la mise à jour SQL 08 dans Supabase') : r.error);
+  S.prayerPlace = value; S.ppResults = null; render(); toast('Lieu de l\'unité enregistré');
+}
+// Le compte à rebours de l'accueil avance tout seul ; à l'heure de la prière, la carte passe à la suivante
+setInterval(() => {
+  const el = document.querySelector('[data-praycount]'); if (!el || document.hidden) return;
+  const at = Number(el.dataset.praycount);
+  if (at <= Date.now() && S.view === 'accueil' && !userBusy() && !S.sheet) return render();
+  el.textContent = untilTxt(at);
+}, 30000);
+
 /* Cartes de l'accueil : un toucher ouvre le détail, deux touchers ouvrent l'onglet concerné */
 let statTap = null;
 function statClick(k) {
@@ -512,6 +596,7 @@ function vAccueil() {
       <button class="btn" data-go="calendrier" style="align-self:flex-start">${ico('cal')} Calendrier</button>
     </div>
   </div>
+  ${prayCard()}
   <div>
     <div class="stats">
       ${stat('absents', nAbs, nAbs > 1 ? 'chefs et cheftaines absents' : 'chef ou cheftaine absent·e', dayShort, 'var(--c-red)')}
@@ -804,6 +889,7 @@ function evModal() {
       ${e.location || e.address ? `<p>📍 ${e.location ? `<b>${esc(e.location)}</b>` : ''}${e.location && e.address ? '<br>' : ''}${esc(e.address || '')}</p>` : ''}
       ${hasCoords(e) ? `<div class="row">${placeLinks(e)}<button class="btn small" data-mapfocus="${e.id}">${ico('pin')} Voir sur la carte</button></div>` : ''}
       ${e.details ? `<p style="white-space:pre-wrap">${esc(e.details)}</p>` : ''}
+      ${hasCoords(e) ? prayLine(o.start, { name: e.location || e.address, lat: e.lat, lng: e.lng }) : ''}
       ${presenceBlock(o)}
       ${by ? `<p style="color:var(--muted);font-size:.85rem">Ajouté par ${esc(display(by))}</p>` : ''}
       ${can('calendrier') ? `<div class="row" style="justify-content:flex-end"><button class="btn danger" data-evdel="${e.id}">${e.repeat && e.repeat !== 'none' ? 'Supprimer la série' : 'Supprimer'}</button><button class="btn primary" data-evedit="${esc(o.key)}">Modifier</button></div>` : ''}
@@ -1145,12 +1231,15 @@ function notifSheet() {
     <div class="row" style="justify-content:space-between"><h2 id="ntTitle">Notifications</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
     ${dev}
     <div class="row" style="justify-content:space-between"><b>Me prévenir pour</b><span class="row" style="gap:6px"><button class="btn small" data-notifall="all">Tout</button><button class="btn small" data-notifall="none">Aucun</button></span></div>
-    <div class="switches">${CHANNELS.map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}</div>
+    <div class="switches">${CHANNELS.map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}
+      <button class="switchrow" role="switch" data-notifch="prieres" aria-checked="${S.notifCh.includes('prieres')}"><span>🕌 Heures de prière<small class="hint" style="display:block;font-weight:400">10 min avant Fajr, Dhuhr et Maghrib</small></span><i class="sw" aria-hidden="true"></i></button></div>
     <small class="hint">Vos choix valent pour tous vos appareils. Pour ne plus rien recevoir, choisissez « Aucun » ou coupez les notifications sur ce téléphone.</small>
   </div></div>`;
 }
+// Canaux de discussion + alertes de prière
+const NOTIF_IDS = () => [...CHANNELS.map((c) => c.id), 'prieres'];
 async function setNotifCh(next) {
-  const prev = S.notifCh; S.notifCh = CHANNELS.map((c) => c.id).filter((id) => next.includes(id)); render();
+  const prev = S.notifCh; S.notifCh = NOTIF_IDS().filter((id) => next.includes(id)); render();
   const r = await sb.from('notif_prefs').upsert({ member_id: S.me.id, channels: S.notifCh, updated_at: new Date().toISOString() });
   if (r.error) { S.notifCh = prev; render(); fail(needSql(r.error)); }
 }
@@ -1546,7 +1635,7 @@ function render() {
   const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : '';
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
   root.innerHTML = `<div class="app"><aside class="side">
@@ -1622,9 +1711,12 @@ root.addEventListener('click', async (e) => {
   const sg = t.closest('[data-statgo]'); if (sg) return statGo(sg.dataset.statgo);
   const ab = t.closest('[data-absev]'); if (ab) return setAbsence(ab.dataset.absev, ab.dataset.absday, ab.dataset.absmem, ab.dataset.absset === '1');
   if (t.closest('[data-notif]')) { S.sheet = 'notif'; return render(); }
+  if (t.closest('[data-prayers]')) { S.sheet = 'prieres'; return render(); }
+  const pu2 = t.closest('[data-prayuse]'); if (pu2) { if (pu2.dataset.prayuse === 'moi') return useMyPosition(); store.set('prayUseMe', false); return render(); }
+  const ps = t.closest('[data-ppset]'); if (ps) { const a = S.ppResults?.[Number(ps.dataset.ppset)]; return a && setPrayPlace(a); }
   if (t.closest('[data-chanpick]')) { S.sheet = 'chan'; return render(); }
   const nc = t.closest('[data-notifch]'); if (nc) { const id = nc.dataset.notifch; return setNotifCh(S.notifCh.includes(id) ? S.notifCh.filter((x) => x !== id) : [...S.notifCh, id]); }
-  const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? CHANNELS.map((c) => c.id) : []);
+  const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? NOTIF_IDS() : []);
   const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
   const cn = t.closest('[data-calnav]'); if (cn) { calMove(Number(cn.dataset.calnav)); return render(); }
   if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return render(); }
@@ -1760,6 +1852,7 @@ root.addEventListener('submit', async (e) => {
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
   if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
+  if (id === 'ppForm') { e.preventDefault(); return searchPrayPlace($('#ppQ').value); }
   if (id === 'recForm') { e.preventDefault(); if (!S.recBusy) submitRecl(e.target); return; }
   if (id === 'addMember') {
     e.preventDefault();
@@ -1857,6 +1950,7 @@ async function boot() {
   }
   const h = (location.hash || '').slice(1), hc = /^chat-([a-z]+)$/.exec(h);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
+  else if (h === 'prieres') { S.view = 'accueil'; S.sheet = 'prieres'; }
   else if (hc && CHANNELS.some((c) => c.id === hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
   else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
