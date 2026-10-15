@@ -1,5 +1,6 @@
 // Fonction Supabase « notify » : envoie une notification sur les téléphones
-// de tous les chefs et cheftaines quand une annonce est publiée.
+// des chefs et cheftaines quand un message est publié dans un canal qu'ils suivent
+// (choix fait dans le site avec le bouton cloche ; par défaut : les annonces seulement).
 //
 // À créer dans Supabase : Edge Functions > Deploy a new function > Via Editor,
 // nom « notify », coller ce fichier, puis Deploy.
@@ -13,6 +14,10 @@ const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+const CHANNEL_NAMES: Record<string, string> = {
+  annonces: 'Annonces', general: 'Général', peda: 'Pédagogie',
+  formation: 'Formation & Relève', event: 'Événementiel', support: 'Logistique & trésorerie'
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -55,15 +60,22 @@ Deno.serve(async (req) => {
 
     if (body.action === 'notify') {
       const { data: msg } = await admin.from('messages').select('id, channel, member_id, body').eq('id', body.message_id).maybeSingle();
-      if (!msg || msg.channel !== 'annonces' || msg.member_id !== me.id) return json({ error: 'annonce introuvable' }, 400);
+      if (!msg || msg.member_id !== me.id) return json({ error: 'message introuvable' }, 400);
 
       webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
-      const { data: subs } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').neq('member_id', me.id);
+      const { data: all } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').neq('member_id', me.id);
+      // Canaux suivis par chaque chef (sans choix enregistré : les annonces)
+      const { data: prefs } = await admin.from('notif_prefs').select('member_id, channels');
+      const follows = new Map((prefs || []).map((p: { member_id: string; channels: string[] }) => [p.member_id, p.channels]));
+      const subs = (all || []).filter((s: { member_id: string }) => (follows.get(s.member_id) ?? ['annonces']).includes(msg.channel));
+      const isAnnonce = msg.channel === 'annonces';
       const payload = JSON.stringify({
-        title: `📣 ${me.title} ${me.first_name}`,
+        title: isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: msg.body.length > 180 ? msg.body.slice(0, 177) + '…' : msg.body,
-        url: SITE_URL + '#annonces',
-        tag: 'annonce-' + msg.id
+        url: SITE_URL + (isAnnonce ? '#annonces' : '#chat-' + msg.channel),
+        // Une notification par annonce ; pour les autres canaux, la dernière remplace la précédente
+        tag: isAnnonce ? 'annonce-' + msg.id : 'chat-' + msg.channel,
+        renotify: !isAnnonce
       });
 
       let sent = 0;
