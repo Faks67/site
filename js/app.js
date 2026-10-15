@@ -33,7 +33,11 @@ const ICONS = {
   out: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11"/>',
   pin: '<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
   euro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M15 9.8a3.2 3.2 0 1 0 0 4.4M8.5 11.3h5M8.5 12.9h5"/>',
-  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
+  more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  belloff: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -48,7 +52,8 @@ const S = {
   calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
   mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null,
   vitrine: null, vitrineBusy: false,
-  reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false
+  reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false,
+  absences: [], notifCh: ['annonces'], unread: {}, sheet: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -141,8 +146,17 @@ async function loadAll() {
   if (canRecl()) {
     const rc = await sb.from('reclamations').select('*').order('created_at', { ascending: false }); if (!rc.error) S.reclamations = rc.data;
   } else S.reclamations = [];
+  // Mise à jour 6 : en cas d'erreur (script SQL pas encore lancé), on garde les valeurs précédentes
+  const [ab, np] = await Promise.all([
+    sb.from('event_absences').select('event_id, occ_date, member_id').gte('occ_date', addDays(today(), -62)),
+    S.me ? sb.from('notif_prefs').select('channels').eq('member_id', S.me.id).maybeSingle() : null
+  ]);
+  if (!ab.error) S.absences = ab.data;
+  if (np && !np.error) S.notifCh = np.data ? np.data.channels : ['annonces'];
   loadThumbs();
 }
+// Message clair quand une table de la mise à jour 6 manque encore dans Supabase
+const needSql = (e) => (['42P01', 'PGRST205', 'PGRST202', '42883'].includes(e?.code) ? new Error('lancez d\'abord la mise à jour SQL 06 dans Supabase') : e);
 async function loadThumbs() {
   const imgs = S.docs.filter((d) => d.mime_type?.startsWith('image/') && !S.thumbs[d.file_path]);
   if (!imgs.length) return;
@@ -192,30 +206,60 @@ async function loadMessages(ch) {
     const r = await sb.from('message_reactions').select('message_id, member_id, emoji').in('message_id', ids);
     if (!r.error) { ids.forEach((id) => (S.reacts[id] = [])); r.data.forEach((x) => S.reacts[x.message_id].push(x)); }
   }
-  if (S.view === 'discussion' && S.chan === ch && (!had || sig() !== before)) render();
+  if (viewingChat() && S.chan === ch) markRead(ch);
+  if (S.view === 'discussion' && S.chan === ch && (!had || sig() !== before)) patchChat(!had);
 }
 function startRealtime() {
   if (S.realtime) return;
   S.realtime = sb.channel('messages-live')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: m }) => {
+      if (m.member_id !== S.me?.id) {
+        if (viewingChat() && S.chan === m.channel) markRead(m.channel);
+        else { S.unread[m.channel] = (S.unread[m.channel] || 0) + 1; paintBadges(); }
+      }
       const list = S.msgs[m.channel]; if (!list) return;
       if (!list.some((x) => x.id === m.id)) list.push(m);
-      if (S.view === 'discussion' && S.chan === m.channel) render();
+      if (S.view === 'discussion' && S.chan === m.channel) patchChat();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
       for (const ch in S.msgs) S.msgs[ch] = S.msgs[ch].filter((x) => x.id !== old.id);
-      if (S.view === 'discussion') render();
+      if (S.view === 'discussion') patchChat();
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, ({ new: x }) => {
       const l = S.reacts[x.message_id] || (S.reacts[x.message_id] = []);
       if (!l.some((y) => y.member_id === x.member_id && y.emoji === x.emoji)) l.push(x);
-      if (S.view === 'discussion') render();
+      if (S.view === 'discussion') patchChat();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions' }, ({ old: x }) => {
       if (S.reacts[x.message_id]) S.reacts[x.message_id] = S.reacts[x.message_id].filter((y) => !(y.member_id === x.member_id && y.emoji === x.emoji));
-      if (S.view === 'discussion') render();
+      if (S.view === 'discussion') patchChat();
     })
     .subscribe();
+}
+
+/* ---------- Messages non lus (bulle sur l'onglet Discussion) ---------- */
+const viewingChat = () => S.view === 'discussion' && !document.hidden;
+const unreadTotal = () => CHANNELS.reduce((t, c) => t + (S.unread[c.id] || 0), 0);
+const fmtN = (n) => (n > 99 ? '99+' : String(n));
+async function loadUnread() {
+  const r = await sb.rpc('unread_counts'); if (r.error) return;
+  const u = {}; r.data.forEach((x) => (u[x.channel] = Number(x.n)));
+  if (viewingChat()) u[S.chan] = 0;
+  S.unread = u; paintBadges();
+}
+const readTimers = {};
+function markRead(ch) {
+  if (S.unread[ch]) { S.unread[ch] = 0; paintBadges(); }
+  clearTimeout(readTimers[ch]);
+  readTimers[ch] = setTimeout(() => sb.rpc('mark_read', { p_channel: ch }).then(() => {}, () => {}), 800);
+}
+// Met à jour les pastilles sans redessiner la page (le clavier reste ouvert)
+function paintBadges() {
+  const n = unreadTotal();
+  document.querySelectorAll('[data-badge="total"]').forEach((el) => { el.textContent = fmtN(n); el.hidden = !n; });
+  document.querySelectorAll('[data-badge-ch]').forEach((el) => { const k = S.unread[el.dataset.badgeCh] || 0; el.textContent = fmtN(k); el.hidden = !k; });
+  const dot = $('#chanDot'); if (dot) dot.hidden = !CHANNELS.some((c) => c.id !== S.chan && S.unread[c.id]);
+  try { (n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.())?.catch?.(() => {}); } catch (e) {}
 }
 
 /* ---------- Rafraîchissement automatique ---------- */
@@ -234,16 +278,17 @@ function userBusy() {
 async function refreshData() {
   if (!S.me || document.hidden || !navigator.onLine) return;
   lastRefresh = Date.now();
-  const before = JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations, S.reclamations]);
+  const snap = () => JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations, S.reclamations, S.absences, S.notifCh]);
+  const before = snap();
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
-  loadVitrine();
+  loadVitrine(); loadUnread();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
   // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
   for (const ch in S.msgs) if (ch !== S.chan || S.view !== 'discussion') delete S.msgs[ch];
   if (S.view === 'discussion') await loadMessages(S.chan);
-  const changed = before !== JSON.stringify([S.members, S.groups, S.poles, S.docs, S.events, S.invitations, S.reclamations]);
+  const changed = before !== snap();
   if (!changed || userBusy()) return;
   if (S.evModal?.mode === 'view') {
     const o = S.evModal.occ; const e = S.events.find((x) => x.id === o.e.id);
@@ -276,6 +321,7 @@ function wakeUp() {
   if (document.hidden) return;
   if (Date.now() - lastRefresh > 5000) refreshData();
   if (Date.now() - lastVersionCheck > 15000) checkVersion();
+  if (S.me && viewingChat()) markRead(S.chan);
   applyUpdate();
 }
 document.addEventListener('visibilitychange', wakeUp);
@@ -294,7 +340,7 @@ checkVersion();
 const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
   const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
-  return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span></button>`).join('')
+  return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}</button>`).join('')
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
@@ -302,13 +348,28 @@ const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'
 function tabbarHtml() {
   const more = [['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
-  return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
+  return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}><span class="ticon">${ico(i)}${k === 'discussion' ? badge('total') : ''}</span><span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
   ${S.moreOpen ? `<div class="sheetwrap" data-closemore><div class="card moresheet" role="dialog" aria-label="Plus de pages"><div class="grab"></div>
     ${more.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
     <div class="whoami"><span>Connecté·e : <b>${esc(display(S.me))}</b></span><button class="btn small" data-logout>${ico('out')} Se déconnecter</button></div></div></div>` : ''}`;
 }
-function go(v) { S.view = v; S.moreOpen = false; S.evModal = null; try { history.replaceState(null, '', '#' + v); } catch (e) {} if (v === 'discussion' && !S.msgs[S.chan]) loadMessages(S.chan); render(); window.scrollTo(0, 0); }
+// Pastille rouge du nombre de messages non lus (« total » ou un canal)
+function badge(key, inline) {
+  const n = key === 'total' ? unreadTotal() : S.unread[key] || 0;
+  return `<b class="nbadge${inline ? ' inl' : ''}" ${key === 'total' ? 'data-badge="total"' : `data-badge-ch="${key}"`} ${n ? '' : 'hidden'} aria-label="messages non lus">${fmtN(n)}</b>`;
+}
+function go(v) {
+  S.view = v; S.moreOpen = false; S.evModal = null; S.sheet = null;
+  try { history.replaceState(null, '', '#' + v); } catch (e) {}
+  if (v === 'discussion') { if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan); }
+  render(); window.scrollTo(0, 0);
+}
+function bellHtml() {
+  const on = S.push === 'actif' && S.notifCh.length > 0;
+  return `<button class="bell${on ? ' on' : ''}" id="bell" data-notif aria-label="Notifications${on ? ' activées' : ' désactivées'}" title="Notifications">${ico(on ? 'bell' : 'belloff')}</button>`;
+}
+function paintBell() { const b = $('#bell'); if (b) b.outerHTML = bellHtml(); }
 
 /* ---------- Vues ---------- */
 function chefChip(m, sub) {
@@ -323,27 +384,119 @@ function docRow(d) {
 const ext = (d) => (d.file_path.split('.').pop() || 'FICHIER').toUpperCase().slice(0, 4);
 const nextEvent = () => occurrences(today(), addDays(today(), 400))[0];
 
+/* ---------- Présences aux rendez-vous (présent par défaut, on n'enregistre que les absences) ---------- */
+// Chefs concernés : ceux des groupes de l'événement (sans groupe coché : toute l'unité) et ceux qui n'ont pas de groupe
+const concerned = (e) => { const gs = e.group_ids || []; return S.members.filter((m) => !gs.length || !m.group_id || gs.includes(m.group_id)); };
+const isAbsent = (o, mid) => S.absences.some((a) => a.event_id === o.e.id && a.occ_date === o.start && a.member_id === mid);
+const absentsOf = (o) => S.absences.filter((a) => a.event_id === o.e.id && a.occ_date === o.start).map((a) => member(a.member_id)).filter(Boolean);
+const absAttrs = (o, mid, absent) => `data-absev="${esc(o.e.id)}" data-absday="${o.start}" data-absmem="${mid}" data-absset="${absent ? 1 : 0}"`;
+function presenceCtl(o) {
+  if (!concerned(o.e).some((m) => m.id === S.me.id)) return '';
+  const abs = isAbsent(o, S.me.id);
+  return `<div class="presence"><span>Ma présence</span><div class="seg" role="group" aria-label="Ma présence">
+    <button ${absAttrs(o, S.me.id, false)} aria-pressed="${!abs}">Présent·e</button><button class="no" ${absAttrs(o, S.me.id, true)} aria-pressed="${abs}">Absent·e</button></div></div>`;
+}
+function presenceBlock(o) {
+  const conc = concerned(o.e), ab = absentsOf(o);
+  const list = can('calendrier')
+    ? `<div class="grpchips" role="group" aria-label="Présence de chaque chef">${conc.map((m) => { const a = isAbsent(o, m.id); return `<button type="button" class="abschip" ${absAttrs(o, m.id, !a)} aria-pressed="${a}">${esc(display(m))}</button>`; }).join('')}</div><small class="hint">Touchez un nom pour le passer absent·e (rouge) ou présent·e.</small>`
+    : `<p style="color:var(--muted);font-size:.9rem">${ab.length ? `Absent${ab.length > 1 ? 's' : ''} : <b style="color:var(--fg)">${ab.map((m) => esc(display(m))).join(', ')}</b>` : 'Tout le monde est présent pour le moment.'}</p>`;
+  return `<div class="presbox"><div class="row" style="justify-content:space-between"><b>Présence des chefs · ${conc.length - ab.length}/${conc.length}</b></div>${presenceCtl(o)}${list}</div>`;
+}
+async function setAbsence(eid, day, mid, absent) {
+  const row = { event_id: eid, occ_date: day, member_id: mid };
+  const same = (a) => a.event_id === eid && a.occ_date === day && a.member_id === mid;
+  if (S.absences.some(same) === absent) return;
+  const prev = S.absences;
+  S.absences = absent ? [...prev, row] : prev.filter((a) => !same(a)); render();
+  const r = absent ? await sb.from('event_absences').insert(row) : await sb.from('event_absences').delete().match(row);
+  if (r.error && r.error.code !== '23505') { S.absences = prev; render(); return fail(needSql(r.error)); }
+  if (mid === S.me.id) toast(absent ? 'Absence enregistrée' : 'Présence enregistrée');
+}
+// Le jour du prochain rendez-vous : qui est absent, quels groupes partent en sortie
+function nextDay() {
+  const o = nextEvent(); if (!o) return null;
+  const day = o.start < today() ? today() : o.start;
+  const occs = occOn(occurrences(day, day), day);
+  const keys = new Set(occs.map((x) => x.e.id + '|' + x.start));
+  const absents = new Map();
+  S.absences.filter((a) => keys.has(a.event_id + '|' + a.occ_date)).forEach((a) => {
+    const m = member(a.member_id); if (!m) return;
+    const t = occs.find((x) => x.e.id === a.event_id)?.e.title;
+    const cur = absents.get(m.id) || { m, titles: [] }; if (t && !cur.titles.includes(t)) cur.titles.push(t); absents.set(m.id, cur);
+  });
+  const sorties = occs.filter((x) => x.e.category === 'sortie');
+  const gids = new Set(); sorties.forEach((x) => ((x.e.group_ids || []).length ? x.e.group_ids : S.groups.map((g) => g.id)).forEach((g) => gids.add(g)));
+  return { day, occs, absents: [...absents.values()], sorties, groups: S.groups.filter((g) => gids.has(g.id)) };
+}
+
+/* Cartes de l'accueil : un toucher ouvre le détail, deux touchers ouvrent l'onglet concerné */
+let statTap = null;
+function statClick(k) {
+  if (statTap?.k === k) { clearTimeout(statTap.t); statTap = null; return statGo(k); }
+  clearTimeout(statTap?.t);
+  statTap = { k, t: setTimeout(() => { statTap = null; statOpen(k); }, 280) };
+}
+function statOpen(k) {
+  if (k === 'docs') return toast('Touchez deux fois pour ouvrir la Bibliothèque');
+  S.sheet = 'stat:' + k; render();
+}
+function statGo(k) {
+  if (k === 'absents') { const nd = nextDay(); S.calView = 'mois'; S.calDate = S.calSel = nd?.day || today(); return go('calendrier'); }
+  if (k === 'sorties') return go('localisation');
+  if (k === 'recl') { S.recTab = 'gestion'; S.recFilter = 'en_attente'; return go('reclamations'); }
+  return go('bibliotheque');
+}
+function statSheet(k) {
+  const nd = nextDay(), dayTxt = nd ? fmtLong(nd.day, { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+  let eyebrow = 'Prochain rendez-vous · ' + dayTxt, title = '', body = '', go = '';
+  if (k === 'absents') {
+    title = 'Chefs et cheftaines absents'; go = 'Ouvrir le calendrier';
+    body = !nd ? '<div class="empty">Aucun rendez-vous à venir.</div>' : nd.absents.length
+      ? `<div class="sheetlist">${nd.absents.map(({ m, titles }) => chefChip(m, [grp(m.group_id)?.name, nd.occs.length > 1 ? titles.join(', ') : ''].filter(Boolean).join(' · '))).join('')}</div>`
+      : '<div class="empty">Personne ne s\'est déclaré absent. Chacun peut indiquer son absence depuis l\'accueil ou le calendrier.</div>';
+  } else if (k === 'sorties') {
+    title = 'Groupes en sortie'; go = 'Voir sur la carte';
+    body = !nd || !nd.sorties.length ? '<div class="empty">Aucune sortie prévue ce jour-là. Une sortie est un événement de catégorie « Sortie ou camp » dans le calendrier.</div>'
+      : `<div class="sheetlist">${nd.sorties.map((o) => `<div class="sortie" style="--k:${evColor(o.e)}"><b>${esc(o.e.title)}</b>${grpPills(o.e)}
+        ${o.e.location || o.e.address ? `<p>📍 ${o.e.location ? `<b>${esc(o.e.location)}</b>` : ''}${o.e.location && o.e.address ? '<br>' : ''}${esc(o.e.address || '')}</p>` : '<p style="color:var(--muted)">Lieu pas encore indiqué</p>'}
+        <small>${esc(occWhen(o))}</small>${hasCoords(o.e) ? `<div class="row">${placeLinks(o.e)}</div>` : ''}</div>`).join('')}</div>`;
+  } else if (k === 'recl') {
+    const p = recPending(); eyebrow = 'Remboursements'; title = `Réclamations ouvertes · ${euros(sumOf(p))}`; go = 'Gérer les réclamations';
+    body = p.length ? `<div class="sheetlist">${p.map((r) => { const by = member(r.member_id); return `<div class="recrow"><div style="min-width:0;flex:1">${by ? chefChip(by, r.description.length > 60 ? r.description.slice(0, 57) + '…' : r.description) : '<b>Ancien membre</b>'}</div><b class="amt">${euros(r.amount)}</b></div>`; }).join('')}</div>`
+      : '<div class="empty">Aucune réclamation en attente : tout est remboursé.</div>';
+  }
+  return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="shTitle">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div><span class="eyebrow">${esc(eyebrow)}</span><h2 id="shTitle" style="margin-top:4px">${esc(title)}</h2></div><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    ${body}<div class="row" style="justify-content:flex-end"><button class="btn primary" data-statgo="${k}">${go} →</button></div></div></div>`;
+}
+
 function vAccueil() {
-  const o = nextEvent(); const ev = o?.e; const nd = o ? parseD(o.start) : null;
+  const o = nextEvent(); const ev = o?.e; const nd = o ? parseD(o.start) : null; const nx = nextDay();
+  const dayShort = nx ? cap(parseD(nx.day).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })) : 'aucun rendez-vous';
+  const stat = (k, n, label, sub, tone) => `<button class="stat" data-stat="${k}" style="--k:${tone}" aria-label="${esc(n + ' ' + label)}. Touchez pour le détail, deux fois pour ouvrir l'onglet."><b>${esc(n)}</b><span>${esc(label)}</span><small>${esc(sub)}</small></button>`;
+  const nAbs = nx ? nx.absents.length : 0, nOut = nx ? nx.groups.length : 0, pend = recPending();
   return `<div class="view">
   <div class="hero">
     <div class="main${S.vitrine ? ' withphoto' : ''}"><span class="eyebrow" style="color:inherit;opacity:.85">Espace des chefs et cheftaines</span>
       <h1>Salam ${esc(display(S.me))} !</h1>
-      <p>Retrouvez ici les documents officiels, les comptes rendus, les fiches d'activités et la pédagogie de l'unité, l'organigramme et les pôles.</p>
-      <div class="row" style="margin-top:6px"><button class="btn" data-go="bibliotheque">${ico('up')} Déposer un document</button><button class="btn" data-go="discussion" style="background:transparent;color:inherit;border-color:currentColor">${ico('chat')} Discussion</button></div>
+      <p class="herotxt">Retrouvez ici les documents officiels, les comptes rendus, les fiches d'activités et la pédagogie de l'unité, l'organigramme et les pôles.</p>
+      <div class="row herobtns" style="margin-top:6px"><button class="btn" data-go="bibliotheque">${ico('up')} Déposer un document</button><button class="btn" data-go="discussion" style="background:transparent;color:inherit;border-color:currentColor">${ico('chat')} Discussion</button></div>
       ${S.vitrine ? `<figure class="vitrine"><span class="vglow"></span><img src="${esc(S.vitrine.url)}" alt="Des enfants de l'unité fiers de leur plaque de cookies"></figure>` : '<img class="hands" src="assets/logo.png" alt="">'}
     </div>
     <div class="card next"><span class="eyebrow">Prochain rendez-vous</span>
-      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
+      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}${presenceCtl(o)}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
       <button class="btn" data-go="calendrier" style="align-self:flex-start">${ico('cal')} Calendrier</button>
     </div>
   </div>
-  ${can('remboursement') && recPending().length ? `<button class="card recalert" data-go="reclamations" data-rectabgo="gestion">${ico('euro', 22)}<span><b>${recPending().length} réclamation${recPending().length > 1 ? 's' : ''} en attente</b> · ${euros(sumOf(recPending()))} à rembourser</span><span class="go">Voir →</span></button>` : ''}
-  <div class="stats">
-    <div class="stat"><b>${S.members.length}</b><span>chefs et cheftaines</span></div>
-    <div class="stat"><b>${S.groups.length}</b><span>groupes</span></div>
-    <div class="stat"><b>3</b><span>pôles + fonctions support</span></div>
-    <div class="stat"><b>${S.docs.length}</b><span>documents partagés</span></div>
+  <div>
+    <div class="stats">
+      ${stat('absents', nAbs, nAbs > 1 ? 'chefs et cheftaines absents' : 'chef ou cheftaine absent·e', dayShort, 'var(--c-red)')}
+      ${stat('sorties', nOut, nOut > 1 ? 'groupes en sortie' : 'groupe en sortie', dayShort, 'var(--c-blue)')}
+      ${can('remboursement') ? stat('recl', pend.length, pend.length > 1 ? 'réclamations ouvertes' : 'réclamation ouverte', euros(sumOf(pend)) + ' à rembourser', 'var(--c-yellow)') : ''}
+      ${stat('docs', S.docs.length, S.docs.length > 1 ? 'documents partagés' : 'document partagé', 'Bibliothèque', 'var(--c-purple)')}
+    </div>
+    <p class="stathint">Touchez une carte pour le détail, deux fois pour ouvrir l'onglet.</p>
   </div>
   <div class="grid g2">
     <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Derniers documents</h3><button class="btn" data-go="bibliotheque">Tout voir</button></div>
@@ -628,6 +781,7 @@ function evModal() {
       ${e.location || e.address ? `<p>📍 ${e.location ? `<b>${esc(e.location)}</b>` : ''}${e.location && e.address ? '<br>' : ''}${esc(e.address || '')}</p>` : ''}
       ${hasCoords(e) ? `<div class="row">${placeLinks(e)}<button class="btn small" data-mapfocus="${e.id}">${ico('pin')} Voir sur la carte</button></div>` : ''}
       ${e.details ? `<p style="white-space:pre-wrap">${esc(e.details)}</p>` : ''}
+      ${presenceBlock(o)}
       ${by ? `<p style="color:var(--muted);font-size:.85rem">Ajouté par ${esc(display(by))}</p>` : ''}
       ${can('calendrier') ? `<div class="row" style="justify-content:flex-end"><button class="btn danger" data-evdel="${e.id}">${e.repeat && e.repeat !== 'none' ? 'Supprimer la série' : 'Supprimer'}</button><button class="btn primary" data-evedit="${esc(o.key)}">Modifier</button></div>` : ''}
     </div></div>`;
@@ -710,7 +864,7 @@ async function saveEvent() {
   S.evModal = null; render(); toast(id ? 'Événement modifié' : 'Événement ajouté');
 }
 
-function reactionsHtml(m) {
+function reactionsHtml(m, canDel) {
   const list = S.reacts[m.id] || [];
   const groups = {};
   list.forEach((x) => { (groups[x.emoji] = groups[x.emoji] || []).push(x.member_id); });
@@ -720,32 +874,79 @@ function reactionsHtml(m) {
     return `<button class="react${mine ? ' mine' : ''}" data-react="${m.id}" data-emoji-r="${esc(e)}" title="${esc(names)}" aria-label="${esc(e)} ${who.length}, ${esc(names)}">${esc(e)} <span>${who.length}</span></button>`;
   }).join('');
   const picker = S.reactPicker === m.id ? `<span class="quick">${QUICK_REACTIONS.map((e) => `<button data-react="${m.id}" data-emoji-r="${e}" aria-label="Réagir ${e}">${e}</button>`).join('')}</span>` : '';
-  return `<div class="reacts">${chips}<button class="react add" data-reactpick="${m.id}" aria-label="Ajouter une réaction" aria-expanded="${S.reactPicker === m.id}">${S.reactPicker === m.id ? '×' : '☺︎+'}</button>${picker}</div>`;
+  return `<div class="reacts">${chips}<button class="react add" data-reactpick="${m.id}" aria-label="Ajouter une réaction" aria-expanded="${S.reactPicker === m.id}">${S.reactPicker === m.id ? '×' : '☺︎+'}</button>${picker}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div>`;
 }
-function pushBanner() {
-  const st = S.push;
-  if (st === 'actif') return `<div class="pushbar ok">🔔 Notifications activées sur cet appareil. <button class="linkbtn" data-push="off">Désactiver</button></div>`;
-  if (st === 'non-supporte') return `<div class="pushbar">${isIOS() && !isStandalone() ? 'Sur iPhone, ajoutez d\'abord le site à l\'écran d\'accueil (bouton Partager, puis « Sur l\'écran d\'accueil »), ouvrez-le depuis l\'icône, puis activez les notifications ici.' : 'Ce navigateur ne permet pas les notifications. Essayez avec Chrome, Firefox, Edge ou Safari récent.'}</div>`;
-  if (st === 'refuse') return `<div class="pushbar">Les notifications sont bloquées pour ce site. Autorisez-les dans les réglages du navigateur, puis rechargez la page.</div>`;
-  return `<div class="pushbar"><span>Recevez chaque annonce directement sur votre téléphone.</span><button class="btn small primary" data-push="on">🔔 Activer les notifications</button></div>`;
+const chanObj = () => CHANNELS.find((x) => x.id === S.chan) || CHANNELS[0];
+const chanLabel = (c) => `${c.announce ? '📣' : '#'} ${esc(c.name)}`;
+const hm = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+function dayLabel(d) {
+  const s = isoD(new Date(d)), t = today();
+  if (s === t) return "Aujourd'hui";
+  if (s === addDays(t, -1)) return 'Hier';
+  return fmtLong(s, { weekday: 'long', day: 'numeric', month: 'long', ...(s.slice(0, 4) !== t.slice(0, 4) ? { year: 'numeric' } : {}) });
+}
+// Bulles façon messagerie : les miennes à droite, les messages qui se suivent du même auteur sont regroupés
+function msgsHtml() {
+  const c = chanObj(), list = S.msgs[S.chan];
+  if (!list) return '<p class="chatempty">Chargement…</p>';
+  if (!list.length) return `<p class="chatempty">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`;
+  let prev = null;
+  return list.map((m) => {
+    const a = member(m.member_id), mine = m.member_id === S.me.id, k = grp(a?.group_id)?.color || 'var(--muted)';
+    const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
+    const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
+    prev = m;
+    const canDel = can('discussion') || mine;
+    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}" style="--k:${k}">
+      ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
+      <div class="bubble"><p>${esc(m.body)}</p><time datetime="${esc(m.created_at)}">${hm(m.created_at)}</time></div>
+      ${reactionsHtml(m, canDel)}</div></div>`;
+  }).join('');
+}
+// Redessine seulement la liste des messages : la zone d'écriture garde le focus et le clavier reste ouvert
+function patchChat(toBottom) {
+  const box = $('#msgs');
+  if (!box || box.dataset.chan !== S.chan || S.view !== 'discussion') return render();
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  box.innerHTML = msgsHtml();
+  if (near || toBottom) box.scrollTop = box.scrollHeight;
+  paintBadges();
 }
 function vChat() {
-  const c = CHANNELS.find((x) => x.id === S.chan) || CHANNELS[0]; let lastH = '';
-  const chans = CHANNELS.map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="h">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button data-chan="${x.id}" aria-current="${x.id === S.chan}">${x.announce ? '📣' : '#'} ${esc(x.name)}</button>`; }).join('');
-  const list = S.msgs[S.chan];
-  return `<div class="view">
-  <div><span class="eyebrow">Entre chefs et cheftaines</span><h1>Discussion</h1></div>
-  <div class="card chat"><nav class="chans" aria-label="Fils de discussion">${chans}</nav>
-    <section class="thread"><header><b>${c.announce ? '📣' : '#'} ${esc(c.name)}</b>${c.announce ? '<div style="color:var(--muted);font-size:.82rem">Chaque message ici envoie une notification à tous les chefs et cheftaines.</div>' : ''}</header>
-      ${c.announce ? pushBanner() : ''}
-      <div class="msgs" id="msgs">${!list ? '<p style="color:var(--muted)">Chargement…</p>' : list.length ? list.map((m) => {
-        const a = member(m.member_id); const k = grp(a?.group_id)?.color || 'var(--muted)';
-        const canDel = can('discussion') || m.member_id === S.me.id;
-        return `<div class="msg" style="--k:${k}"><div class="av">${esc(initial(a))}</div><div class="b"><div class="h"><b>${esc(display(a))}</b>${esc(fmtTime(m.created_at))}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div><p>${esc(m.body)}</p>${reactionsHtml(m)}</div></div>`;
-      }).join('') : `<p style="color:var(--muted)">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`}</div>
-      ${S.emojiOpen ? `<div class="emojis" role="group" aria-label="Emojis">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>` : ''}
-      <form class="compose" id="compose"><button type="button" class="btn emojibtn" data-emojitoggle aria-label="Emojis" aria-expanded="${S.emojiOpen}">😊</button><textarea id="msgIn" placeholder="${c.announce ? 'Écrire une annonce pour toute l\'unité' : 'Écrire dans # ' + esc(c.name)}" aria-label="Message" maxlength="4000"></textarea><button class="btn primary" type="submit">${c.announce ? 'Publier' : 'Envoyer'}</button></form>
-    </section></div></div>`;
+  const c = chanObj(), other = CHANNELS.some((x) => x.id !== S.chan && S.unread[x.id]);
+  return `<div class="view chatview">
+  <div class="chathead"><h1>Discussion</h1>
+    <button class="chanbtn" data-chanpick aria-haspopup="dialog" aria-label="Canal : ${esc(c.name)}. Changer de canal"><span>${chanLabel(c)}</span><i class="cdot" id="chanDot" ${other ? '' : 'hidden'}></i>${ico('down')}</button></div>
+  <div class="card chat">
+    <div class="msgs" id="msgs" data-chan="${S.chan}">${msgsHtml()}</div>
+    <div class="emojis" id="emojis" role="group" aria-label="Emojis" ${S.emojiOpen ? '' : 'hidden'}>${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>
+    <form class="compose" id="compose"><button type="button" class="cbtn" data-emojitoggle aria-label="Emojis" aria-expanded="${S.emojiOpen}">😊</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
+  </div></div>`;
+}
+function chanSheet() {
+  let lastH = '';
+  const items = CHANNELS.map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="chh">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button class="chanitem" data-chan="${x.id}" aria-current="${x.id === S.chan}"><span>${chanLabel(x)}</span>${badge(x.id, true)}</button>`; }).join('');
+  return `<div class="modal" data-closemodal><div class="card sheet chansheet" role="dialog" aria-modal="true" aria-labelledby="chTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="chTitle">Canaux</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>${items}</div></div>`;
+}
+function notifSheet() {
+  const st = S.push;
+  const dev = st === 'actif' ? `<div class="notifdev ok"><span><b>🔔 Activées sur cet appareil</b><small>Vous êtes prévenu·e pour les canaux cochés ci-dessous.</small></span><button class="btn small" data-push="off">Couper ici</button></div>`
+    : st === 'non-supporte' ? `<div class="notifdev"><span><b>Pas disponible ici</b><small>${isIOS() && !isStandalone() ? 'Sur iPhone, ajoutez d\'abord le site à l\'écran d\'accueil (bouton Partager, puis « Sur l\'écran d\'accueil »), ouvrez-le depuis l\'icône, puis revenez ici.' : 'Ce navigateur ne permet pas les notifications. Essayez avec Chrome, Firefox, Edge ou Safari récent.'}</small></span></div>`
+    : st === 'refuse' ? '<div class="notifdev"><span><b>Bloquées</b><small>Les notifications sont bloquées pour ce site. Autorisez-les dans les réglages du téléphone ou du navigateur, puis rechargez la page.</small></span></div>'
+    : '<div class="notifdev"><span><b>Désactivées sur cet appareil</b><small>Activez-les pour être prévenu·e même quand le site est fermé.</small></span><button class="btn small primary" data-push="on">Activer</button></div>';
+  return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="ntTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="ntTitle">Notifications</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    ${dev}
+    <div class="row" style="justify-content:space-between"><b>Me prévenir pour</b><span class="row" style="gap:6px"><button class="btn small" data-notifall="all">Tout</button><button class="btn small" data-notifall="none">Aucun</button></span></div>
+    <div class="switches">${CHANNELS.map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}</div>
+    <small class="hint">Vos choix valent pour tous vos appareils. Pour ne plus rien recevoir, choisissez « Aucun » ou coupez les notifications sur ce téléphone.</small>
+  </div></div>`;
+}
+async function setNotifCh(next) {
+  const prev = S.notifCh; S.notifCh = CHANNELS.map((c) => c.id).filter((id) => next.includes(id)); render();
+  const r = await sb.from('notif_prefs').upsert({ member_id: S.me.id, channels: S.notifCh, updated_at: new Date().toISOString() });
+  if (r.error) { S.notifCh = prev; render(); fail(needSql(r.error)); }
 }
 
 /* ---------- Notifications sur téléphone (Web Push) ---------- */
@@ -796,13 +997,13 @@ async function toggleReaction(id, emoji) {
   const mine = l.find((x) => x.member_id === S.me.id && x.emoji === emoji);
   S.reactPicker = null;
   if (mine) {
-    S.reacts[id] = l.filter((x) => x !== mine); render();
+    S.reacts[id] = l.filter((x) => x !== mine); patchChat();
     const r = await sb.from('message_reactions').delete().match({ message_id: id, member_id: S.me.id, emoji });
-    if (r.error) { l.push(mine); fail(r.error); render(); }
+    if (r.error) { l.push(mine); fail(r.error); patchChat(); }
   } else {
-    const x = { message_id: id, member_id: S.me.id, emoji }; l.push(x); render();
+    const x = { message_id: id, member_id: S.me.id, emoji }; l.push(x); patchChat();
     const r = await sb.from('message_reactions').insert(x);
-    if (r.error && r.error.code !== '23505') { S.reacts[id] = S.reacts[id].filter((y) => y !== x); fail(r.error); render(); }
+    if (r.error && r.error.code !== '23505') { S.reacts[id] = S.reacts[id].filter((y) => y !== x); fail(r.error); patchChat(); }
   }
 }
 
@@ -1139,18 +1340,54 @@ function render() {
   const V = { reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : '';
+  // Discussion : la page ne défile plus, seuls les messages défilent
+  document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
   root.innerHTML = `<div class="app"><aside class="side">
-    <div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>
+    <div class="topline"><div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>${bellHtml()}</div>
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
     <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button></div>
-  </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${S.view === 'calendrier' ? evModal() : ''}</div>`;
+  </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${sheet}</div>`;
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
   if (S.view === 'localisation') initMap(); else if (mapInst) { mapInst.remove(); mapInst = null; mapMarkers = []; }
   const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
-  if (draft && $('#msgIn')) $('#msgIn').value = draft;
+  if (draft && $('#msgIn')) { $('#msgIn').value = draft; growMsg(); }
   if (active === 'msgIn') { const i = $('#msgIn'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
+  if (!$('#msgIn')) document.documentElement.classList.remove('typing');
 }
+
+/* ---------- Écran fixe : pas de zoom avec les doigts, la discussion suit le clavier ---------- */
+// La zone d'écriture grandit avec le texte (jusqu'à un tiers de l'écran), puis défile
+function growMsg() {
+  const i = $('#msgIn'); if (!i) return;
+  i.style.height = 'auto';
+  const max = Math.round((window.visualViewport?.height || innerHeight) * 0.33);
+  i.style.height = Math.min(i.scrollHeight + 2, max) + 'px';
+  i.style.overflowY = i.scrollHeight + 2 > max ? 'auto' : 'hidden';
+}
+// Hauteur réellement visible (sans le clavier) : la discussion s'y ajuste
+function syncViewport() {
+  const v = window.visualViewport, st = document.documentElement.style;
+  st.setProperty('--vvh', (v ? v.height : innerHeight) + 'px');
+  st.setProperty('--vvtop', (v ? v.offsetTop : 0) + 'px');
+  const m = $('#msgs'); if (m && document.activeElement?.id === 'msgIn') m.scrollTop = m.scrollHeight;
+}
+window.visualViewport?.addEventListener('resize', syncViewport);
+window.visualViewport?.addEventListener('scroll', syncViewport);
+addEventListener('resize', syncViewport);
+syncViewport();
+// iPhone ignore « user-scalable=no » : on bloque nous-mêmes le pincement (la carte garde son propre zoom)
+document.addEventListener('gesturestart', (e) => { if (!e.target.closest?.('.maplibregl-map')) e.preventDefault(); });
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 && !e.target.closest?.('.maplibregl-map')) e.preventDefault(); }, { passive: false });
+// Pendant l'écriture, la barre d'onglets du bas disparaît pour laisser la place
+document.addEventListener('focusin', (e) => { if (e.target.id === 'msgIn') { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); } });
+document.addEventListener('focusout', (e) => {
+  if (e.target.id !== 'msgIn') return;
+  setTimeout(() => { if (document.activeElement?.id !== 'msgIn') { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
+});
+// Toucher le bouton Envoyer ou Emojis ne ferme pas le clavier
+root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
 
 /* ---------- Événements ---------- */
 root.addEventListener('click', async (e) => {
@@ -1170,7 +1407,15 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-mapidf]')) return mapInst?.flyTo({ ...IDF, speed: 1.6 });
   if (t.closest('[data-mapfr]')) return mapInst?.fitBounds([[-5.2, 41.3], [9.6, 51.1]], { padding: 30 });
   // Calendrier
-  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { S.evModal = null; return render(); }
+  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { S.evModal = null; S.sheet = null; return render(); }
+  // Accueil, présences, notifications, canaux
+  const st = t.closest('[data-stat]'); if (st) return statClick(st.dataset.stat);
+  const sg = t.closest('[data-statgo]'); if (sg) return statGo(sg.dataset.statgo);
+  const ab = t.closest('[data-absev]'); if (ab) return setAbsence(ab.dataset.absev, ab.dataset.absday, ab.dataset.absmem, ab.dataset.absset === '1');
+  if (t.closest('[data-notif]')) { S.sheet = 'notif'; return render(); }
+  if (t.closest('[data-chanpick]')) { S.sheet = 'chan'; return render(); }
+  const nc = t.closest('[data-notifch]'); if (nc) { const id = nc.dataset.notifch; return setNotifCh(S.notifCh.includes(id) ? S.notifCh.filter((x) => x !== id) : [...S.notifCh, id]); }
+  const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? CHANNELS.map((c) => c.id) : []);
   const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
   const cn = t.closest('[data-calnav]'); if (cn) { calMove(Number(cn.dataset.calnav)); return render(); }
   if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return render(); }
@@ -1201,14 +1446,23 @@ root.addEventListener('click', async (e) => {
   const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; if (g.dataset.rectabgo) { S.recTab = g.dataset.rectabgo; S.recFilter = 'en_attente'; } return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
-  const ch = t.closest('[data-chan]'); if (ch) { S.chan = ch.dataset.chan; S.emojiOpen = false; S.reactPicker = null; if (!S.msgs[S.chan]) loadMessages(S.chan); return render(); }
+  const ch = t.closest('[data-chan]'); if (ch) {
+    S.chan = ch.dataset.chan; S.sheet = null; S.emojiOpen = false; S.reactPicker = null;
+    try { history.replaceState(null, '', '#chat-' + S.chan); } catch (e) {}
+    if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan);
+    return render();
+  }
   const o = t.closest('[data-open]'); if (o) return openDoc(o.dataset.open);
   const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
-  const rp = t.closest('[data-reactpick]'); if (rp) { const id = Number(rp.dataset.reactpick); S.reactPicker = S.reactPicker === id ? null : id; return render(); }
-  if (t.closest('[data-emojitoggle]')) { S.emojiOpen = !S.emojiOpen; render(); $('#msgIn')?.focus(); return; }
+  const rp = t.closest('[data-reactpick]'); if (rp) { const id = Number(rp.dataset.reactpick); S.reactPicker = S.reactPicker === id ? null : id; return patchChat(); }
+  const et = t.closest('[data-emojitoggle]'); if (et) {
+    S.emojiOpen = !S.emojiOpen; $('#emojis').hidden = !S.emojiOpen; et.setAttribute('aria-expanded', S.emojiOpen);
+    const m = $('#msgs'); if (m && S.emojiOpen) m.scrollTop = m.scrollHeight;
+    return;
+  }
   const em = t.closest('[data-emoji]'); if (em) {
     const i = $('#msgIn'); const a = i.selectionStart ?? i.value.length, b = i.selectionEnd ?? a;
-    i.value = i.value.slice(0, a) + em.dataset.emoji + i.value.slice(b); i.focus(); const p = a + em.dataset.emoji.length; i.setSelectionRange(p, p); return;
+    i.value = i.value.slice(0, a) + em.dataset.emoji + i.value.slice(b); const p = a + em.dataset.emoji.length; i.setSelectionRange(p, p); growMsg(); return;
   }
   const pu = t.closest('[data-push]'); if (pu) return pu.dataset.push === 'on' ? enablePush() : disablePush();
   const dd = t.closest('[data-deldoc]'); if (dd) return confirmThen(dd, 'Confirmer la suppression', async () => {
@@ -1219,7 +1473,7 @@ root.addEventListener('click', async (e) => {
   });
   const dm = t.closest('[data-delmsg]'); if (dm) return confirmThen(dm, 'Confirmer', async () => {
     const r = await sb.from('messages').delete().eq('id', dm.dataset.delmsg); if (r.error) return fail(r.error);
-    S.msgs[S.chan] = S.msgs[S.chan].filter((x) => String(x.id) !== dm.dataset.delmsg); render();
+    S.msgs[S.chan] = S.msgs[S.chan].filter((x) => String(x.id) !== dm.dataset.delmsg); patchChat();
   });
   const sm = t.closest('[data-savemember]'); if (sm) return saveMember(sm.closest('tr'));
   const rm = t.closest('[data-delmember]'); if (rm) return confirmThen(rm, 'Confirmer le retrait', async () => {
@@ -1289,13 +1543,16 @@ root.addEventListener('submit', async (e) => {
   const id = e.target.id;
   if (id === 'compose') {
     e.preventDefault(); const v = $('#msgIn').value.trim(); if (!v) return;
-    $('#msgIn').value = '';
-    const r = await sb.from('messages').insert({ channel: S.chan, member_id: S.me.id, body: v }).select().single();
-    if (r.error) { $('#msgIn').value = v; return fail(r.error); }
-    const list = S.msgs[S.chan] || (S.msgs[S.chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
-    S.emojiOpen = false; render(); $('#msgIn')?.focus();
-    if (S.chan === 'annonces') {
-      const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
+    const chan = S.chan;
+    $('#msgIn').value = ''; growMsg();
+    const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, body: v }).select().single();
+    if (r.error) { if ($('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); } return fail(r.error); }
+    const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
+    if (S.emojiOpen) { S.emojiOpen = false; const ep = $('#emojis'); if (ep) ep.hidden = true; $('[data-emojitoggle]')?.setAttribute('aria-expanded', 'false'); }
+    if (S.chan === chan) patchChat(true);
+    // Notifications : envoyées aux chefs qui suivent ce canal (choix fait avec la cloche)
+    const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
+    if (chan === 'annonces') {
       if (n.error) toast("Annonce publiée, mais les notifications n'ont pas pu être envoyées");
       else toast(`Annonce publiée et envoyée à ${n.data.sent} appareil${n.data.sent > 1 ? 's' : ''}`);
     }
@@ -1312,9 +1569,12 @@ root.addEventListener('submit', async (e) => {
     render(); toast('Personne ajoutée');
   }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen)) { S.evModal = null; S.moreOpen = false; render(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen || S.sheet)) { S.evModal = null; S.moreOpen = false; S.sheet = null; render(); } });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(e); }, true);
-root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.target.form.requestSubmit(); } });
+// Sur ordinateur, Entrée envoie (Maj + Entrée pour aller à la ligne) ; sur téléphone, Entrée va à la ligne
+const touchScreen = () => matchMedia('(pointer: coarse)').matches;
+root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); } });
+root.addEventListener('input', (e) => { if (e.target.id === 'msgIn') growMsg(); });
 ['dragover', 'dragenter'].forEach((t) => root.addEventListener(t, (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
 /* Appui long sur une réaction : affiche qui l'a mise (utile sur téléphone, où le survol n'existe pas) */
 const whobox = $('#whobox');
@@ -1354,12 +1614,13 @@ async function boot() {
   S.session = data.session;
   if (S.session) {
     try { await loadAll(); lastRefresh = Date.now(); } catch (e) { fail(e); }
-    if (S.me) { startRealtime(); loadVitrine(); }
+    if (S.me) { startRealtime(); loadVitrine(); loadUnread(); }
   }
-  const h = (location.hash || '').slice(1);
+  const h = (location.hash || '').slice(1), hc = /^chat-([a-z]+)$/.exec(h);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
+  else if (hc && CHANNELS.some((c) => c.id === hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
   else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
-  if (S.me) checkPush().then(() => { if (S.view === 'discussion') render(); });
+  if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
   if (S.view === 'discussion' && S.me) loadMessages(S.chan);
   render();
 }
@@ -1370,7 +1631,10 @@ sb.auth.onAuthStateChange((event, session) => {
   if (event === 'SIGNED_OUT') { S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
   if (changed && session) setTimeout(boot, 0);
 });
+// Ouverture depuis une notification : #annonces ou #chat-<canal>
 window.addEventListener('hashchange', () => {
-  if (location.hash === '#annonces' && S.me) { S.view = 'discussion'; S.chan = 'annonces'; loadMessages('annonces'); render(); }
+  const m = /^#(?:chat-)?([a-z]+)$/.exec(location.hash);
+  const ch = m && CHANNELS.find((c) => c.id === m[1] && (location.hash.startsWith('#chat-') || c.id === 'annonces'));
+  if (ch && S.me) { S.view = 'discussion'; S.chan = ch.id; S.sheet = null; loadMessages(ch.id); render(); }
 });
 boot();
