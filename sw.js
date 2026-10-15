@@ -1,4 +1,4 @@
-// Reçoit les notifications des annonces et les affiche sur l'appareil.
+// Reçoit les notifications (annonces et canaux suivis) et les affiche sur l'appareil.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
@@ -10,6 +10,7 @@ self.addEventListener('push', (event) => {
     icon: 'assets/icon-192.png',
     badge: 'assets/icon-192.png',
     tag: data.tag || 'annonce',
+    renotify: !!data.renotify,
     data: { url: data.url || './#annonces' }
   }));
 });
