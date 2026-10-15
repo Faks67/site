@@ -957,7 +957,7 @@ function vChat() {
     <div class="msgs" id="msgs" data-chan="${S.chan}">${msgsHtml()}</div>
     <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
     <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
-    <form class="compose" id="compose"><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF et emojis" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
+    <form class="compose" id="compose"><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
   </div></div>`;
 }
 
@@ -978,53 +978,86 @@ function jumpTo(id) {
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
-/* ---------- GIF (GIPHY) et emojis, comme dans WhatsApp ---------- */
+/* ---------- GIF (GIPHY), comme dans WhatsApp ---------- */
 const GIPHY = 'https://api.giphy.com/v1/gifs/';
-let gifTimer = null, gifCtrl = null;
+const GIF_PAGE = 30, GIF_MAX = 150;
+let gifTimer = null, gifCtrl = null, gifBusy = false, gifEnd = false;
+const gifCols = () => (innerWidth >= 700 ? 4 : 3);
 function pickerHtml() {
-  const tab = S.picker || 'gif';
-  return `${tab === 'gif' ? `<div class="gifsearch"><input type="search" id="gifQ" placeholder="Rechercher des GIF" autocomplete="off" enterkeyhint="search" value="${esc(S.gifQ || '')}" aria-label="Rechercher des GIF"></div>
-    <div class="gifgrid" id="gifGrid">${gifGridHtml()}</div><div class="giphy">Powered by GIPHY</div>`
-    : `<div class="emojis">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>`}
-    <div class="ptabs" role="tablist"><button type="button" role="tab" data-ptab="gif" aria-selected="${tab === 'gif'}">GIF</button><button type="button" role="tab" data-ptab="emoji" aria-selected="${tab === 'emoji'}">Emojis</button></div>`;
+  return `<div class="gifsearch"><input type="search" id="gifQ" placeholder="Rechercher des GIF" autocomplete="off" enterkeyhint="search" value="${esc(S.gifQ || '')}" aria-label="Rechercher des GIF"></div>
+    <div class="gifgrid" id="gifGrid">${gifGridHtml()}</div><div class="giphy">Powered by GIPHY</div>`;
 }
+const gifItem = (g, i) => `<button type="button" class="gif" data-gif="${i}" style="aspect-ratio:${g.w} / ${g.h}" aria-label="${esc(g.title || 'GIF')}"><img src="${esc(g.prev)}" alt="" loading="lazy" draggable="false"></button>`;
+// Mosaïque en colonnes : chaque GIF va dans la colonne la plus courte, la liste défile de haut en bas
 function gifGridHtml() {
   if (!CFG.GIPHY_KEY) return '<p class="gifmsg">Les GIF ne sont pas encore activés : il manque la clé GIPHY dans js/config.js.</p>';
   if (S.gifs === null) return '<p class="gifmsg">Chargement…</p>';
-  if (S.gifErr) return `<p class="gifmsg">${esc(S.gifErr)}</p>`;
+  if (S.gifErr && !S.gifs.length) return `<p class="gifmsg">${esc(S.gifErr)}</p>`;
   if (!S.gifs.length) return '<p class="gifmsg">Aucun GIF trouvé.</p>';
-  return S.gifs.map((g, i) => `<button type="button" class="gif" data-gif="${i}" style="aspect-ratio:${g.w} / ${g.h}" aria-label="${esc(g.title || 'GIF')}"><img src="${esc(g.prev)}" alt="" loading="lazy" draggable="false"></button>`).join('');
+  S.gifColH = Array(gifCols()).fill(0);
+  const cols = S.gifColH.map(() => '');
+  S.gifs.forEach((g, i) => { const c = S.gifColH.indexOf(Math.min(...S.gifColH)); cols[c] += gifItem(g, i); S.gifColH[c] += g.h / g.w; });
+  return `<div class="gifcols">${cols.map((h) => `<div class="gifcol">${h}</div>`).join('')}</div>`;
 }
 function paintGifs() { const g = $('#gifGrid'); if (g) g.innerHTML = gifGridHtml(); }
-async function loadGifs(q) {
+// Ajoute la page suivante sans redessiner les GIF déjà affichés
+function appendGifs(from) {
+  const cols = [...document.querySelectorAll('#gifGrid .gifcol')];
+  if (!cols.length || cols.length !== S.gifColH?.length) return paintGifs();
+  S.gifs.slice(from).forEach((g, k) => {
+    const c = S.gifColH.indexOf(Math.min(...S.gifColH));
+    cols[c].insertAdjacentHTML('beforeend', gifItem(g, from + k)); S.gifColH[c] += g.h / g.w;
+  });
+}
+async function loadGifs(q, more) {
   if (!CFG.GIPHY_KEY) return paintGifs();
-  gifCtrl?.abort(); gifCtrl = new AbortController();
-  S.gifs = null; S.gifErr = ''; paintGifs();
+  if (more && (gifBusy || gifEnd || !S.gifs?.length || S.gifs.length >= GIF_MAX)) return;
+  gifCtrl?.abort(); gifCtrl = new AbortController(); gifBusy = true;
+  const from = more ? S.gifs.length : 0;
+  if (!more) { S.gifs = null; S.gifErr = ''; gifEnd = false; paintGifs(); const g = $('#gifGrid'); if (g) g.scrollTop = 0; }
   try {
-    const p = new URLSearchParams({ api_key: CFG.GIPHY_KEY, limit: '30', rating: 'g', bundle: 'messaging_non_clips' });
+    const p = new URLSearchParams({ api_key: CFG.GIPHY_KEY, limit: String(GIF_PAGE), offset: String(from), rating: 'g', bundle: 'messaging_non_clips' });
     if (q) { p.set('q', q); p.set('lang', 'fr'); }
     const r = await fetch(GIPHY + (q ? 'search' : 'trending') + '?' + p, { signal: gifCtrl.signal });
     if (!r.ok) throw new Error(r.status === 429 ? 'Trop de recherches pour le moment, réessayez dans un instant.' : 'GIF indisponibles pour le moment.');
     const j = await r.json();
-    S.gifs = (j.data || []).map((g) => {
-      const f = g.images?.fixed_width, pv = g.images?.fixed_width_downsampled || f;
+    const got = (j.data || []).map((g) => {
+      const f = g.images?.fixed_width, pv = g.images?.fixed_width_small || g.images?.fixed_width_downsampled || f;
       return f && { title: g.title, prev: pv.webp || pv.url, url: String(f.url).split('?')[0], w: Number(f.width) || 200, h: Number(f.height) || 150 };
     }).filter((g) => g && GIF_RE.test(g.url));
-  } catch (e) { if (e.name === 'AbortError') return; S.gifs = []; S.gifErr = e.message || 'GIF indisponibles pour le moment.'; }
-  paintGifs();
+    if ((j.data || []).length < GIF_PAGE) gifEnd = true;
+    S.gifs = more ? S.gifs.concat(got) : got;
+    gifBusy = false;
+    return more ? appendGifs(from) : paintGifs();
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    gifBusy = false;
+    if (more) { gifEnd = true; return; }
+    S.gifs = []; S.gifErr = e.message || 'GIF indisponibles pour le moment.';
+  }
+  gifBusy = false; paintGifs();
 }
-function openPicker(tab) {
-  S.picker = tab;
+// Premier défilement dans les GIF : le panneau prend toute la place de la discussion ; en bas : page suivante
+root.addEventListener('scroll', (e) => {
+  if (e.target.id !== 'gifGrid') return;
+  const g = e.target;
+  if (g.scrollTop > 8) $('.chat')?.classList.add('gifull');
+  if (g.scrollHeight - g.scrollTop - g.clientHeight < 400) loadGifs(S.gifQ.trim(), true);
+}, true);
+function openPicker() {
+  S.picker = 'gif';
   const pk = $('#picker'); if (!pk) return;
   pk.innerHTML = pickerHtml(); pk.hidden = false; document.documentElement.classList.add('typing');
   const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = ico('down'); b.setAttribute('aria-expanded', 'true'); }
-  if (tab === 'gif' && !S.gifs?.length) loadGifs(S.gifQ || '');
+  if (!S.gifs?.length) loadGifs(S.gifQ || '');
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
 }
 function closePicker() {
   if (!S.picker) return;
   S.picker = null;
   const pk = $('#picker'); if (pk) pk.hidden = true;
+  $('.chat')?.classList.remove('gifull');
+  const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
   if (!['msgIn', 'gifQ'].includes(document.activeElement?.id)) document.documentElement.classList.remove('typing');
   const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = '<span>GIF</span>'; b.setAttribute('aria-expanded', 'false'); }
 }
@@ -1632,7 +1665,6 @@ root.addEventListener('click', async (e) => {
   const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
   // Discussion : GIF, emojis, réponses, actions sur un message
   if (t.closest('[data-pickertoggle]')) { if (S.picker) { closePicker(); $('#msgIn')?.focus(); } else { $('#msgIn')?.blur(); openPicker('gif'); } return; }
-  const pt = t.closest('[data-ptab]'); if (pt) return openPicker(pt.dataset.ptab);
   const gf = t.closest('[data-gif]'); if (gf) {
     const g = S.gifs?.[Number(gf.dataset.gif)]; if (!g) return;
     closePicker();
