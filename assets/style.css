@@ -534,7 +534,8 @@ body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
 .stat b{color:var(--k,var(--fg))}
 .stat small{font-size:.72rem;color:var(--muted)}
 .stathint{font-size:.75rem;color:var(--muted);margin-top:6px}
-@media (max-width:860px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stats .stat:last-child:nth-child(odd){grid-column:span 2}}
+.stats{grid-auto-rows:1fr}
+@media (max-width:860px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* Présences */
 .presence{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface-2);border-radius:12px;padding:8px 10px}
@@ -619,3 +620,91 @@ html.chatmode main{display:flex;flex-direction:column;min-height:0;overflow:hidd
 .sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s}
 .switchrow[aria-checked="true"] .sw{background:var(--green)}
 .switchrow[aria-checked="true"] .sw::after{transform:translateX(18px)}
+
+/* ===== Mise à jour 7 : réponses, GIF, actions sur les messages, semaine du calendrier ===== */
+.chat .msgs{touch-action:pan-y}
+.msg{position:relative;will-change:transform}
+.bubble{position:relative;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.swipeico{position:absolute;left:-30px;top:50%;transform:translateY(-50%) scale(.6);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:var(--muted);opacity:0;transition:opacity .15s,transform .15s;font-size:.9rem}
+.msg.swiping .swipeico{opacity:1;transform:translateY(-50%) scale(1)}
+.msg.flash .bubble{animation:flash 1.2s ease}
+@keyframes flash{0%,40%{box-shadow:0 0 0 3px color-mix(in srgb,var(--gold) 70%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+/* Bouton d'actions au survol (ordinateur) ; sur téléphone : appui long */
+.mmore{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;border:0;padding:0;display:grid;place-items:center;background:color-mix(in srgb,var(--surface) 85%,transparent);color:var(--muted);opacity:0;transition:opacity .12s}
+.mmore svg{width:16px;height:16px}
+@media (hover:hover){.msg:hover .mmore{opacity:1}}
+@media (hover:none){.mmore{display:none}}
+/* Message cité dans une réponse */
+.quote{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:150px;text-align:left;border:0;border-left:3px solid var(--q);border-radius:8px;padding:5px 9px;margin:0 0 5px;background:color-mix(in srgb,var(--q) 14%,transparent);color:inherit;font:inherit;font-size:.82rem;line-height:1.3}
+.msg.mine .quote{background:rgba(255,255,255,.18);border-left-color:rgba(255,255,255,.85)}
+.quote b{color:var(--q);font-size:.78rem}
+.msg.mine .quote b{color:inherit}
+.quote span{opacity:.8;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap}
+/* GIF */
+.bubble.isgif{padding:4px;background:var(--surface);border-color:var(--line)}
+.msg.mine .bubble.isgif{background:var(--green-soft);border-color:transparent}
+.gifimg{display:block;width:min(240px,62vw);height:auto;border-radius:14px;background:var(--surface-2)}
+.bubble.isgif time{position:absolute;right:10px;bottom:9px;margin:0;padding:2px 6px;border-radius:99px;background:rgba(0,0,0,.45);color:#fff;opacity:1;float:none}
+.bubble.isgif .quote{margin:2px 2px 6px;width:auto}
+/* Barre « Réponse à … » au-dessus de la zone d'écriture */
+.replybar{display:flex;align-items:center;gap:6px;padding:8px 8px 0;background:var(--surface);border-top:1px solid var(--line)}
+.replybar+.picker,.replybar:not([hidden])~.compose{border-top:0}
+.rbq{flex:1;min-width:0;display:flex;flex-direction:column;border-left:3px solid var(--q);background:color-mix(in srgb,var(--q) 12%,transparent);border-radius:8px;padding:6px 10px;font-size:.84rem;line-height:1.3}
+.rbq b{color:var(--q);font-size:.8rem}
+.rbq span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.replybar .cbtn{width:34px;height:34px;font-size:.95rem;color:var(--muted)}
+/* Bouton GIF et panneau GIF / emojis */
+.gifbtn span{font-size:.72rem;font-weight:800;letter-spacing:.04em;border:2px solid currentColor;border-radius:6px;padding:1px 4px;color:var(--muted)}
+.gifbtn svg{width:22px;height:22px;color:var(--muted)}
+.picker{display:flex;flex-direction:column;height:min(46vh,340px);border-top:1px solid var(--line);background:var(--surface)}
+.gifsearch{padding:8px 10px 6px}
+.gifsearch input{width:100%;padding:9px 14px;border-radius:99px;border:1px solid var(--line);background:var(--bg)}
+.gifgrid{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 6px;columns:2 130px;column-gap:6px}
+.gif{display:block;width:100%;margin:0 0 6px;padding:0;border:0;border-radius:10px;overflow:hidden;background:var(--surface-2);break-inside:avoid}
+.gif img{display:block;width:100%;height:100%;object-fit:cover}
+.gifmsg{color:var(--muted);text-align:center;padding:24px 12px;column-span:all;font-size:.9rem}
+.giphy{font-size:.62rem;color:var(--muted);text-align:right;padding:0 12px 4px;letter-spacing:.04em}
+.picker .emojis{flex:1;max-height:none;border-top:0;background:none}
+.ptabs{display:flex;justify-content:center;gap:6px;padding:6px;border-top:1px solid var(--line)}
+.ptabs button{border:0;background:none;padding:6px 16px;border-radius:99px;font-weight:700;font-size:.85rem;color:var(--muted)}
+.ptabs button[aria-selected="true"]{background:var(--green-soft);color:var(--green-ink)}
+/* Menu d'appui long */
+.mmback{position:fixed;inset:0;z-index:45;background:rgba(10,20,10,.45);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:mmin .15s ease}
+@keyframes mmin{from{opacity:0}}
+.mmgroup{position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:8px;max-width:calc(100vw - 16px)}
+.mmgroup.right{align-items:flex-end}
+.mmreact{display:flex;gap:2px;background:var(--surface);border-radius:99px;padding:5px 8px;box-shadow:0 8px 28px rgba(0,0,0,.25);animation:mmpop .18s cubic-bezier(.2,.9,.3,1.3)}
+.mmreact button{border:0;background:none;font-size:1.55rem;width:40px;height:40px;border-radius:50%;padding:0;transition:transform .1s}
+.mmreact button:active{transform:scale(1.25)}
+.mmreact button.on{background:var(--green-soft)}
+@keyframes mmpop{from{opacity:0;transform:scale(.8)}}
+.mmclone{max-width:min(80vw,560px);overflow:hidden;border-radius:18px;pointer-events:none}
+.mmclone .bubble{max-width:100%}
+.mmclone .mmore{display:none}
+.mmclone.mine .bubble{background:var(--green);color:var(--on-green)}
+.mmclone.mine .quote{background:rgba(255,255,255,.18);border-left-color:rgba(255,255,255,.85)}
+.mmclone.mine .quote b{color:inherit}
+.mmlist{display:flex;flex-direction:column;min-width:210px;background:var(--surface);border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.25);animation:mmpop .18s ease}
+.mmlist button{display:flex;align-items:center;gap:12px;border:0;background:none;padding:13px 16px;font-weight:700;text-align:left;font-size:.95rem}
+.mmlist button+button{border-top:1px solid var(--line)}
+.mmlist button:hover{background:var(--surface-2)}
+.mmlist button.danger{color:var(--c-red)}
+/* Calendrier, vue semaine sur téléphone : les 7 jours tiennent dans l'écran, bord à bord */
+@media (max-width:860px){
+  .tgrid,.tgrid[style*="--days:7"]{min-width:0!important}
+  .trow,.tgrid[style*="--days:1"] .trow{grid-template-columns:30px repeat(var(--days),minmax(0,1fr))}
+  .tgrid[style*="--days:1"] .trow{grid-template-columns:30px minmax(0,1fr)}
+  .tgrid-wrap{margin-inline:-12px;border-radius:12px}
+  .tlbl{font-size:.56rem;padding:4px 2px 0;text-align:center;overflow:hidden}
+  .hours span{right:2px;font-size:.56rem}
+  .thd{padding:6px 0}
+  .thd small{font-size:.58rem;letter-spacing:0}
+  .thd b{width:28px;height:28px;font-size:.95rem}
+  .adcell{padding:2px 1px}
+  .tallday .tlbl{font-size:0}
+  .tallday .tlbl::after{content:"Jour";font-size:.56rem}
+  .tgrid[style*="--days:7"] .evchip{font-size:.58rem;padding:1px 2px}
+  .tgrid[style*="--days:7"] .tev{padding:2px 2px;font-size:.6rem;border-left-width:2px;border-radius:5px}
+  .tgrid[style*="--days:7"] .tev span{display:none}
+  .tgrid[style*="--days:7"] .tev b{white-space:normal;overflow-wrap:anywhere;line-height:1.15}
+}

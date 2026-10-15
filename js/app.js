@@ -1,5 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
-import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
+import * as CFG from './config.js';
+const { SUPABASE_URL, SUPABASE_KEY } = CFG;
 import { POLE_CONTENT, CATS, CHANNELS, VALUES, QUICK_REACTIONS, EMOJIS } from './data.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -54,7 +55,8 @@ const S = {
   mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null,
   vitrine: null, vitrineBusy: false,
   reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false,
-  absences: [], notifCh: ['annonces'], unread: {}, sheet: null
+  absences: [], notifCh: ['annonces'], unread: {}, sheet: null,
+  picker: null, gifQ: '', gifs: [], gifErr: '', replyTo: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -223,7 +225,7 @@ function startRealtime() {
       if (S.view === 'discussion' && S.chan === m.channel) patchChat();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
-      for (const ch in S.msgs) S.msgs[ch] = S.msgs[ch].filter((x) => x.id !== old.id);
+      removeMsg(old.id);
       if (S.view === 'discussion') patchChat();
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, ({ new: x }) => {
@@ -885,17 +887,27 @@ async function saveEvent() {
   S.evModal = null; render(); toast(id ? 'Événement modifié' : 'Événement ajouté');
 }
 
-function reactionsHtml(m, canDel) {
+// Réactions sous la bulle (on en ajoute par appui long sur le message)
+function reactionsHtml(m) {
   const list = S.reacts[m.id] || [];
+  if (!list.length) return '';
   const groups = {};
   list.forEach((x) => { (groups[x.emoji] = groups[x.emoji] || []).push(x.member_id); });
-  const chips = Object.entries(groups).map(([e, who]) => {
+  return `<div class="reacts">${Object.entries(groups).map(([e, who]) => {
     const mine = who.includes(S.me.id);
     const names = who.map((id) => display(member(id))).join(', ');
     return `<button class="react${mine ? ' mine' : ''}" data-react="${m.id}" data-emoji-r="${esc(e)}" title="${esc(names)}" aria-label="${esc(e)} ${who.length}, ${esc(names)}">${esc(e)} <span>${who.length}</span></button>`;
-  }).join('');
-  const picker = S.reactPicker === m.id ? `<span class="quick">${QUICK_REACTIONS.map((e) => `<button data-react="${m.id}" data-emoji-r="${e}" aria-label="Réagir ${e}">${e}</button>`).join('')}</span>` : '';
-  return `<div class="reacts">${chips}<button class="react add" data-reactpick="${m.id}" aria-label="Ajouter une réaction" aria-expanded="${S.reactPicker === m.id}">${S.reactPicker === m.id ? '×' : '☺︎+'}</button>${picker}${canDel ? `<button class="del" data-delmsg="${m.id}" aria-label="Supprimer le message">Supprimer</button>` : ''}</div>`;
+  }).join('')}</div>`;
+}
+const GIF_RE = /^https:\/\/(media[0-9]*|i)\.giphy\.com\/[A-Za-z0-9/._-]+$/;
+const findMsg = (id) => Object.values(S.msgs).flat().find((x) => x.id === id);
+const msgPreview = (o) => (o.gif_url ? '🎞️ GIF' : o.body);
+// Message cité au-dessus d'une réponse, en couleur transparente ; un toucher remonte jusqu'à l'original
+function quoteHtml(m) {
+  if (!m.reply_to && !S.deletedReplies?.has(m.id)) return '';
+  const o = m.reply_to && findMsg(m.reply_to), a = o && member(o.member_id);
+  const k = o?.member_id === S.me.id ? 'var(--green)' : grp(a?.group_id)?.color || 'var(--muted)';
+  return `<button class="quote" ${o ? `data-jump="${o.id}"` : ''} style="--q:${k}"><b>${o ? (o.member_id === S.me.id ? 'Vous' : esc(display(a))) : 'Réponse'}</b><span>${o ? esc(msgPreview(o)) : m.reply_to ? 'Message plus ancien' : 'Message supprimé'}</span></button>`;
 }
 const chanObj = () => CHANNELS.find((x) => x.id === S.chan) || CHANNELS[0];
 const chanLabel = (c) => `${c.announce ? '📣' : '#'} ${esc(c.name)}`;
@@ -917,11 +929,14 @@ function msgsHtml() {
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
     prev = m;
-    const canDel = can('discussion') || mine;
-    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}" style="--k:${k}">
+    const gif = m.gif_url && GIF_RE.test(m.gif_url);
+    const body = gif
+      ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
+      : `<p>${esc(m.body)}</p>`;
+    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
-      <div class="bubble"><p>${esc(m.body)}</p><time datetime="${esc(m.created_at)}">${hm(m.created_at)}</time></div>
-      ${reactionsHtml(m, canDel)}</div></div>`;
+      <div class="bubble${gif ? ' isgif' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
+      ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
   }).join('');
 }
 // Redessine seulement la liste des messages : la zone d'écriture garde le focus et le clavier reste ouvert
@@ -940,9 +955,146 @@ function vChat() {
     <button class="chanbtn" data-chanpick aria-haspopup="dialog" aria-label="Canal : ${esc(c.name)}. Changer de canal"><span>${chanLabel(c)}</span><i class="cdot" id="chanDot" ${other ? '' : 'hidden'}></i>${ico('down')}</button></div>
   <div class="card chat">
     <div class="msgs" id="msgs" data-chan="${S.chan}">${msgsHtml()}</div>
-    <div class="emojis" id="emojis" role="group" aria-label="Emojis" ${S.emojiOpen ? '' : 'hidden'}>${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>
-    <form class="compose" id="compose"><button type="button" class="cbtn" data-emojitoggle aria-label="Emojis" aria-expanded="${S.emojiOpen}">😊</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
+    <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
+    <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
+    <form class="compose" id="compose"><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF et emojis" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
   </div></div>`;
+}
+
+/* ---------- Réponses ---------- */
+function replyBarHtml() {
+  const o = S.replyTo; if (!o) return '';
+  const a = member(o.member_id), k = o.member_id === S.me.id ? 'var(--green)' : grp(a?.group_id)?.color || 'var(--muted)';
+  return `<div class="rbq" style="--q:${k}"><b>Réponse à ${o.member_id === S.me.id ? 'vous-même' : esc(display(a))}</b><span>${esc(msgPreview(o))}</span></div><button type="button" class="cbtn" data-replycancel aria-label="Annuler la réponse">✕</button>`;
+}
+function setReply(o) {
+  S.replyTo = o;
+  const bar = $('#replybar'); if (bar) { bar.innerHTML = replyBarHtml(); bar.hidden = !o; }
+  if (o) { closePicker(); $('#msgIn')?.focus(); }
+}
+function jumpTo(id) {
+  const el = document.querySelector(`.msg[data-mid="${id}"]`); if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+
+/* ---------- GIF (GIPHY) et emojis, comme dans WhatsApp ---------- */
+const GIPHY = 'https://api.giphy.com/v1/gifs/';
+let gifTimer = null, gifCtrl = null;
+function pickerHtml() {
+  const tab = S.picker || 'gif';
+  return `${tab === 'gif' ? `<div class="gifsearch"><input type="search" id="gifQ" placeholder="Rechercher des GIF" autocomplete="off" enterkeyhint="search" value="${esc(S.gifQ || '')}" aria-label="Rechercher des GIF"></div>
+    <div class="gifgrid" id="gifGrid">${gifGridHtml()}</div><div class="giphy">Powered by GIPHY</div>`
+    : `<div class="emojis">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}</div>`}
+    <div class="ptabs" role="tablist"><button type="button" role="tab" data-ptab="gif" aria-selected="${tab === 'gif'}">GIF</button><button type="button" role="tab" data-ptab="emoji" aria-selected="${tab === 'emoji'}">Emojis</button></div>`;
+}
+function gifGridHtml() {
+  if (!CFG.GIPHY_KEY) return '<p class="gifmsg">Les GIF ne sont pas encore activés : il manque la clé GIPHY dans js/config.js.</p>';
+  if (S.gifs === null) return '<p class="gifmsg">Chargement…</p>';
+  if (S.gifErr) return `<p class="gifmsg">${esc(S.gifErr)}</p>`;
+  if (!S.gifs.length) return '<p class="gifmsg">Aucun GIF trouvé.</p>';
+  return S.gifs.map((g, i) => `<button type="button" class="gif" data-gif="${i}" style="aspect-ratio:${g.w} / ${g.h}" aria-label="${esc(g.title || 'GIF')}"><img src="${esc(g.prev)}" alt="" loading="lazy" draggable="false"></button>`).join('');
+}
+function paintGifs() { const g = $('#gifGrid'); if (g) g.innerHTML = gifGridHtml(); }
+async function loadGifs(q) {
+  if (!CFG.GIPHY_KEY) return paintGifs();
+  gifCtrl?.abort(); gifCtrl = new AbortController();
+  S.gifs = null; S.gifErr = ''; paintGifs();
+  try {
+    const p = new URLSearchParams({ api_key: CFG.GIPHY_KEY, limit: '30', rating: 'g', bundle: 'messaging_non_clips' });
+    if (q) { p.set('q', q); p.set('lang', 'fr'); }
+    const r = await fetch(GIPHY + (q ? 'search' : 'trending') + '?' + p, { signal: gifCtrl.signal });
+    if (!r.ok) throw new Error(r.status === 429 ? 'Trop de recherches pour le moment, réessayez dans un instant.' : 'GIF indisponibles pour le moment.');
+    const j = await r.json();
+    S.gifs = (j.data || []).map((g) => {
+      const f = g.images?.fixed_width, pv = g.images?.fixed_width_downsampled || f;
+      return f && { title: g.title, prev: pv.webp || pv.url, url: String(f.url).split('?')[0], w: Number(f.width) || 200, h: Number(f.height) || 150 };
+    }).filter((g) => g && GIF_RE.test(g.url));
+  } catch (e) { if (e.name === 'AbortError') return; S.gifs = []; S.gifErr = e.message || 'GIF indisponibles pour le moment.'; }
+  paintGifs();
+}
+function openPicker(tab) {
+  S.picker = tab;
+  const pk = $('#picker'); if (!pk) return;
+  pk.innerHTML = pickerHtml(); pk.hidden = false; document.documentElement.classList.add('typing');
+  const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = ico('down'); b.setAttribute('aria-expanded', 'true'); }
+  if (tab === 'gif' && !S.gifs?.length) loadGifs(S.gifQ || '');
+  const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
+}
+function closePicker() {
+  if (!S.picker) return;
+  S.picker = null;
+  const pk = $('#picker'); if (pk) pk.hidden = true;
+  if (!['msgIn', 'gifQ'].includes(document.activeElement?.id)) document.documentElement.classList.remove('typing');
+  const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = '<span>GIF</span>'; b.setAttribute('aria-expanded', 'false'); }
+}
+async function sendMessage(row) {
+  const chan = S.chan, reply = S.replyTo;
+  const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...row }).select().single();
+  if (r.error) { fail(needSql7(r.error)); return null; }
+  if (reply && S.replyTo === reply) setReply(null);
+  const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
+  if (S.chan === chan) patchChat(true);
+  // Notifications : envoyées aux chefs qui suivent ce canal (choix fait avec la cloche)
+  const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
+  if (chan === 'annonces') {
+    if (n.error) toast("Annonce publiée, mais les notifications n'ont pas pu être envoyées");
+    else toast(`Annonce publiée et envoyée à ${n.data.sent} appareil${n.data.sent > 1 ? 's' : ''}`);
+  }
+  return r.data;
+}
+// Colonnes de la mise à jour 7 absentes : message clair
+const needSql7 = (e) => (e?.code === 'PGRST204' || /reply_to|gif_/.test(e?.message || '') ? new Error('lancez d\'abord la mise à jour SQL 07 dans Supabase') : e);
+
+/* ---------- Appui long sur un message : réagir, répondre, copier, supprimer ---------- */
+const msgMenu = document.createElement('div');
+msgMenu.className = 'mmback'; msgMenu.hidden = true; document.body.append(msgMenu);
+function openMsgMenu(id) {
+  const m = findMsg(id), bub = document.querySelector(`.msg[data-mid="${id}"] .bubble`); if (!m || !bub) return;
+  const mine = m.member_id === S.me.id, canDel = mine || can('discussion');
+  document.activeElement?.blur?.();
+  msgMenu.innerHTML = `<div class="mmgroup" role="dialog" aria-label="Actions sur le message">
+    <div class="mmreact">${QUICK_REACTIONS.map((e) => `<button type="button" data-mmreact="${e}" aria-label="Réagir ${e}" ${(S.reacts[id] || []).some((x) => x.member_id === S.me.id && x.emoji === e) ? 'class="on"' : ''}>${e}</button>`).join('')}</div>
+    <div class="mmclone${mine ? ' mine' : ''}">${bub.outerHTML}</div>
+    <div class="mmlist"><button type="button" data-mm="reply">↩<span>Répondre</span></button>${m.gif_url ? '' : '<button type="button" data-mm="copy">⧉<span>Copier</span></button>'}${canDel ? '<button type="button" class="danger" data-mm="del">🗑<span>Supprimer</span></button>' : ''}</div></div>`;
+  msgMenu.dataset.id = id; msgMenu.hidden = false;
+  // Le groupe (réactions, message, actions) se place sur le message, sans sortir de l'écran
+  const r = bub.getBoundingClientRect(), g = msgMenu.firstElementChild, vh = window.visualViewport?.height || innerHeight;
+  const clone = g.querySelector('.mmclone'); clone.style.width = r.width + 'px';
+  const listH = g.querySelector('.mmlist').offsetHeight, reactH = 56;
+  const maxClone = vh - 16 - reactH - 8 - listH;
+  if (r.height > maxClone) clone.style.maxHeight = Math.max(60, maxClone) + 'px';
+  const h = reactH + Math.min(r.height, Math.max(60, maxClone)) + 8 + listH;
+  g.style.top = Math.max(8, Math.min(r.top - reactH, vh - 8 - h)) + 'px';
+  if (mine) g.style.right = Math.max(8, innerWidth - r.right) + 'px'; else g.style.left = Math.max(8, r.left) + 'px';
+  g.classList.toggle('right', mine);
+  navigator.vibrate?.(12);
+}
+function closeMsgMenu() { msgMenu.hidden = true; msgMenu.innerHTML = ''; }
+msgMenu.addEventListener('click', async (e) => {
+  const id = Number(msgMenu.dataset.id), m = findMsg(id);
+  const rx = e.target.closest('[data-mmreact]'); if (rx) { closeMsgMenu(); return toggleReaction(id, rx.dataset.mmreact); }
+  const act = e.target.closest('[data-mm]')?.dataset.mm;
+  if (!act) { if (!e.target.closest('.mmgroup')) closeMsgMenu(); return; }
+  if (act === 'reply') { closeMsgMenu(); return m && setReply(m); }
+  if (act === 'copy') { closeMsgMenu(); try { await navigator.clipboard.writeText(m.body); toast('Message copié'); } catch (err) { toast('Copie impossible sur cet appareil'); } return; }
+  if (act === 'del') {
+    const b = e.target.closest('[data-mm]');
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.querySelector('span').textContent = 'Confirmer la suppression'; return; }
+    closeMsgMenu();
+    const r = await sb.from('messages').delete().eq('id', id); if (r.error) return fail(r.error);
+    removeMsg(id); patchChat(); toast('Message supprimé');
+  }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !msgMenu.hidden) closeMsgMenu(); });
+// Retire un message de l'affichage ; les réponses qui le citaient affichent « Message supprimé »
+function removeMsg(id) {
+  S.deletedReplies = S.deletedReplies || new Set();
+  for (const ch in S.msgs) {
+    S.msgs[ch].forEach((x) => { if (x.reply_to === id) { x.reply_to = null; S.deletedReplies.add(x.id); } });
+    S.msgs[ch] = S.msgs[ch].filter((x) => x.id !== id);
+  }
+  if (S.replyTo?.id === id) setReply(null);
 }
 function chanSheet() {
   let lastH = '';
@@ -1402,10 +1554,13 @@ syncViewport();
 document.addEventListener('gesturestart', (e) => { if (!e.target.closest?.('.maplibregl-map')) e.preventDefault(); });
 document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 && !e.target.closest?.('.maplibregl-map')) e.preventDefault(); }, { passive: false });
 // Pendant l'écriture, la barre d'onglets du bas disparaît pour laisser la place
-document.addEventListener('focusin', (e) => { if (e.target.id === 'msgIn') { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); } });
+document.addEventListener('focusin', (e) => {
+  if (e.target.id === 'msgIn') closePicker();
+  if (['msgIn', 'gifQ'].includes(e.target.id)) { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); }
+});
 document.addEventListener('focusout', (e) => {
-  if (e.target.id !== 'msgIn') return;
-  setTimeout(() => { if (document.activeElement?.id !== 'msgIn') { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
+  if (!['msgIn', 'gifQ'].includes(e.target.id)) return;
+  setTimeout(() => { if (!['msgIn', 'gifQ'].includes(document.activeElement?.id) && !S.picker) { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
 });
 // Toucher le bouton Envoyer ou Emojis ne ferme pas le clavier
 root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
@@ -1468,19 +1623,24 @@ root.addEventListener('click', async (e) => {
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
   const ch = t.closest('[data-chan]'); if (ch) {
-    S.chan = ch.dataset.chan; S.sheet = null; S.emojiOpen = false; S.reactPicker = null;
+    S.chan = ch.dataset.chan; S.sheet = null; S.replyTo = null; closePicker();
     try { history.replaceState(null, '', '#chat-' + S.chan); } catch (e) {}
     if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan);
     return render();
   }
   const o = t.closest('[data-open]'); if (o) return openDoc(o.dataset.open);
   const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
-  const rp = t.closest('[data-reactpick]'); if (rp) { const id = Number(rp.dataset.reactpick); S.reactPicker = S.reactPicker === id ? null : id; return patchChat(); }
-  const et = t.closest('[data-emojitoggle]'); if (et) {
-    S.emojiOpen = !S.emojiOpen; $('#emojis').hidden = !S.emojiOpen; et.setAttribute('aria-expanded', S.emojiOpen);
-    const m = $('#msgs'); if (m && S.emojiOpen) m.scrollTop = m.scrollHeight;
-    return;
+  // Discussion : GIF, emojis, réponses, actions sur un message
+  if (t.closest('[data-pickertoggle]')) { if (S.picker) { closePicker(); $('#msgIn')?.focus(); } else { $('#msgIn')?.blur(); openPicker('gif'); } return; }
+  const pt = t.closest('[data-ptab]'); if (pt) return openPicker(pt.dataset.ptab);
+  const gf = t.closest('[data-gif]'); if (gf) {
+    const g = S.gifs?.[Number(gf.dataset.gif)]; if (!g) return;
+    closePicker();
+    return sendMessage({ body: 'GIF', gif_url: g.url, gif_w: g.w, gif_h: g.h });
   }
+  if (t.closest('[data-replycancel]')) return setReply(null);
+  const mm = t.closest('[data-mmenu]'); if (mm) return openMsgMenu(Number(mm.dataset.mmenu));
+  const jp = t.closest('[data-jump]'); if (jp) return jumpTo(jp.dataset.jump);
   const em = t.closest('[data-emoji]'); if (em) {
     const i = $('#msgIn'); const a = i.selectionStart ?? i.value.length, b = i.selectionEnd ?? a;
     i.value = i.value.slice(0, a) + em.dataset.emoji + i.value.slice(b); const p = a + em.dataset.emoji.length; i.setSelectionRange(p, p); growMsg(); return;
@@ -1564,19 +1724,8 @@ root.addEventListener('submit', async (e) => {
   const id = e.target.id;
   if (id === 'compose') {
     e.preventDefault(); const v = $('#msgIn').value.trim(); if (!v) return;
-    const chan = S.chan;
     $('#msgIn').value = ''; growMsg();
-    const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, body: v }).select().single();
-    if (r.error) { if ($('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); } return fail(r.error); }
-    const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
-    if (S.emojiOpen) { S.emojiOpen = false; const ep = $('#emojis'); if (ep) ep.hidden = true; $('[data-emojitoggle]')?.setAttribute('aria-expanded', 'false'); }
-    if (S.chan === chan) patchChat(true);
-    // Notifications : envoyées aux chefs qui suivent ce canal (choix fait avec la cloche)
-    const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
-    if (chan === 'annonces') {
-      if (n.error) toast("Annonce publiée, mais les notifications n'ont pas pu être envoyées");
-      else toast(`Annonce publiée et envoyée à ${n.data.sent} appareil${n.data.sent > 1 ? 's' : ''}`);
-    }
+    if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
   if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
   if (id === 'recForm') { e.preventDefault(); if (!S.recBusy) submitRecl(e.target); return; }
@@ -1595,7 +1744,44 @@ root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(
 // Sur ordinateur, Entrée envoie (Maj + Entrée pour aller à la ligne) ; sur téléphone, Entrée va à la ligne
 const touchScreen = () => matchMedia('(pointer: coarse)').matches;
 root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); } });
-root.addEventListener('input', (e) => { if (e.target.id === 'msgIn') growMsg(); });
+root.addEventListener('input', (e) => {
+  if (e.target.id === 'msgIn') growMsg();
+  if (e.target.id === 'gifQ') { S.gifQ = e.target.value; clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs(S.gifQ.trim()), 350); }
+});
+root.addEventListener('keydown', (e) => { if (e.target.id === 'gifQ' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+
+/* Appui long sur un message (menu d'actions) et glisser vers la droite pour répondre, comme dans WhatsApp */
+let mpress = null, mswipe = null, mLongDone = false;
+root.addEventListener('pointerdown', (e) => {
+  const msg = e.target.closest('#msgs .msg'); if (!msg || e.target.closest('.react, .mmore') || e.button > 0) return;
+  const id = Number(msg.dataset.mid);
+  mLongDone = false;
+  mpress = { x: e.clientX, y: e.clientY, t: setTimeout(() => { mpress = null; mswipe = null; mLongDone = true; openMsgMenu(id); }, 430) };
+  if (e.pointerType !== 'mouse') mswipe = { msg, id, x: e.clientX, y: e.clientY, dx: 0, on: false };
+});
+root.addEventListener('pointermove', (e) => {
+  if (mpress && Math.hypot(e.clientX - mpress.x, e.clientY - mpress.y) > 10) { clearTimeout(mpress.t); mpress = null; }
+  if (!mswipe) return;
+  const dx = e.clientX - mswipe.x, dy = e.clientY - mswipe.y;
+  if (!mswipe.on) { if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { mswipe = null; return; } if (dx > 12 && dx > Math.abs(dy) * 1.5) mswipe.on = true; else return; }
+  mswipe.dx = Math.max(0, Math.min(90, dx));
+  mswipe.msg.style.transform = `translateX(${mswipe.dx}px)`;
+  mswipe.msg.classList.toggle('swiping', mswipe.dx > 60);
+});
+function endPress() {
+  if (mpress) { clearTimeout(mpress.t); mpress = null; }
+  if (mswipe?.on) {
+    const { msg, id, dx } = mswipe;
+    msg.style.transition = 'transform .18s ease'; msg.style.transform = '';
+    setTimeout(() => { msg.style.transition = ''; msg.classList.remove('swiping'); }, 200);
+    if (dx > 60) { const m = findMsg(id); if (m) { navigator.vibrate?.(10); setReply(m); } }
+  }
+  mswipe = null;
+}
+['pointerup', 'pointercancel'].forEach((t) => root.addEventListener(t, endPress));
+// Après un appui long, le relâchement ne déclenche pas de clic (lien, citation…)
+root.addEventListener('click', (e) => { if (mLongDone && e.target.closest('#msgs .msg')) { e.stopImmediatePropagation(); e.preventDefault(); mLongDone = false; } }, true);
+root.addEventListener('contextmenu', (e) => { const msg = e.target.closest('#msgs .msg'); if (msg && !e.target.closest('.react')) { e.preventDefault(); if (!mLongDone) openMsgMenu(Number(msg.dataset.mid)); } });
 ['dragover', 'dragenter'].forEach((t) => root.addEventListener(t, (e) => { const d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } }));
 /* Appui long sur une réaction : affiche qui l'a mise (utile sur téléphone, où le survol n'existe pas) */
 const whobox = $('#whobox');
