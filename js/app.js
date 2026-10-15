@@ -37,7 +37,8 @@ const ICONS = {
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   belloff: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
-  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>'
+  send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -337,7 +338,7 @@ setInterval(() => {
 checkVersion();
 
 /* ---------- Navigation ---------- */
-const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
+const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
   const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}</button>`).join('')
@@ -346,7 +347,7 @@ function navHtml() {
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
 const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['localisation', 'Localisation', 'pin']];
 function tabbarHtml() {
-  const more = [['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['presences', 'Présences', 'check'], ['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}><span class="ticon">${ico(i)}${k === 'discussion' ? badge('total') : ''}</span><span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
@@ -441,8 +442,28 @@ function statOpen(k) {
   if (k === 'docs') return toast('Touchez deux fois pour ouvrir la Bibliothèque');
   S.sheet = 'stat:' + k; render();
 }
+/* Onglet Présences : toutes mes séances à venir, présent·e par défaut */
+function vPresences() {
+  const from = today();
+  const occs = occurrences(from, addDays(from, 120)).filter((o) => concerned(o.e).some((m) => m.id === S.me.id)).slice(0, 40);
+  const nAbs = occs.filter((o) => isAbsent(o, S.me.id)).length;
+  return `<div class="view">
+  <div><span class="eyebrow">Mes séances</span><h1>Présences</h1><p class="lead" style="margin-top:6px">Vous êtes présent·e par défaut. Indiquez ici les séances où vous serez absent·e : les autres chefs le voient sur l'accueil et dans le calendrier.</p></div>
+  ${occs.length ? `<div class="row"><span class="pill">${occs.length} séance${occs.length > 1 ? 's' : ''} à venir</span><span class="pill">Absent·e à ${nAbs}</span></div>
+  <div class="preslist">${occs.map(presRow).join('')}</div>` : '<div class="empty">Aucune séance à venir ne vous concerne pour le moment.</div>'}
+  </div>`;
+}
+function presRow(o) {
+  const abs = isAbsent(o, S.me.id), others = absentsOf(o).filter((m) => m.id !== S.me.id), p = parseD(o.start);
+  return `<div class="card presrow${abs ? ' off' : ''}" style="--k:${evColor(o.e)}">
+    <div class="pdate"><b>${p.getDate()}</b><small>${esc(p.toLocaleDateString('fr-FR', { month: 'short' }))}</small></div>
+    <div class="pinfo"><b>${esc(o.e.title)}</b><small>${esc(cap(p.toLocaleDateString('fr-FR', { weekday: 'long' })))}${isTimed(o) ? ' · ' + fmtHM(o.e.start_time) : ''}${o.e.location ? ' · ' + esc(o.e.location) : ''}</small>
+      ${others.length ? `<small class="pabs">Absent${others.length > 1 ? 's' : ''} : ${others.map((m) => esc(display(m))).join(', ')}</small>` : ''}</div>
+    <div class="seg" role="group" aria-label="Ma présence le ${esc(fmtLong(o.start))}"><button ${absAttrs(o, S.me.id, false)} aria-pressed="${!abs}">Présent·e</button><button class="no" ${absAttrs(o, S.me.id, true)} aria-pressed="${abs}">Absent·e</button></div>
+  </div>`;
+}
 function statGo(k) {
-  if (k === 'absents') { const nd = nextDay(); S.calView = 'mois'; S.calDate = S.calSel = nd?.day || today(); return go('calendrier'); }
+  if (k === 'absents') return go('presences');
   if (k === 'sorties') return go('localisation');
   if (k === 'recl') { S.recTab = 'gestion'; S.recFilter = 'en_attente'; return go('reclamations'); }
   return go('bibliotheque');
@@ -451,7 +472,7 @@ function statSheet(k) {
   const nd = nextDay(), dayTxt = nd ? fmtLong(nd.day, { weekday: 'long', day: 'numeric', month: 'long' }) : '';
   let eyebrow = 'Prochain rendez-vous · ' + dayTxt, title = '', body = '', go = '';
   if (k === 'absents') {
-    title = 'Chefs et cheftaines absents'; go = 'Ouvrir le calendrier';
+    title = 'Chefs et cheftaines absents'; go = 'Ouvrir les présences';
     body = !nd ? '<div class="empty">Aucun rendez-vous à venir.</div>' : nd.absents.length
       ? `<div class="sheetlist">${nd.absents.map(({ m, titles }) => chefChip(m, [grp(m.group_id)?.name, nd.occs.length > 1 ? titles.join(', ') : ''].filter(Boolean).join(' · '))).join('')}</div>`
       : '<div class="empty">Personne ne s\'est déclaré absent. Chacun peut indiquer son absence depuis l\'accueil ou le calendrier.</div>';
@@ -1337,7 +1358,7 @@ function render() {
     root.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="assets/logo.png" alt=""><h2>Accès en attente</h2></div><p>Votre compte (${esc(S.session.user.email)}) n'est relié à aucun chef ou cheftaine. Demandez à un administrateur d'ajouter cette adresse dans la page Administration, puis reconnectez-vous.</p><button class="btn block" data-logout>Se déconnecter</button></div></div>`;
     return;
   }
-  const V = { reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
+  const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
   const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : '';
