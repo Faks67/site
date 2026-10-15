@@ -712,3 +712,29 @@ html.chatmode main{display:flex;flex-direction:column;min-height:0;overflow:hidd
   .tgrid[style*="--days:7"] .tev span{display:none}
   .tgrid[style*="--days:7"] .tev b{white-space:normal;overflow-wrap:anywhere;line-height:1.15}
 }
+
+/* ===== Mise à jour 8 : heures de prière ===== */
+.praycard{display:flex;align-items:center;gap:12px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;padding:12px 16px;background:color-mix(in srgb,var(--c-cyan) 10%,var(--surface));border-color:color-mix(in srgb,var(--c-cyan) 30%,transparent)}
+.praycard .pico{font-size:1.6rem;line-height:1}
+.praycard .pmain{display:flex;flex-direction:column;min-width:0;flex:1}
+.praycard small{color:var(--muted);font-size:.75rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.praycard b{font-family:var(--display);font-size:1.15rem;font-variant-numeric:tabular-nums}
+.praycard .pin{font-weight:700;font-size:.82rem;color:var(--c-cyan);white-space:nowrap}
+.prayseg{display:grid;grid-template-columns:1fr 1fr}
+.prayseg button{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.praylist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.prow{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-variant-numeric:tabular-nums}
+.prow+.prow{border-top:1px solid var(--line)}
+.prow b{font-family:var(--display);font-size:1.1rem}
+.prow.minor{color:var(--muted);font-size:.88rem;padding-block:7px}
+.prow.minor b{font-size:.95rem;font-weight:600}
+.prow.past{opacity:.5}
+.prow.next{background:color-mix(in srgb,var(--c-cyan) 14%,var(--surface));color:var(--fg);opacity:1}
+.prow.next span::after{content:" · prochaine";font-size:.75rem;color:var(--c-cyan);font-weight:700}
+table.praytable{border-collapse:collapse;width:100%;font-size:.82rem;font-variant-numeric:tabular-nums}
+table.praytable th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:4px 2px;text-align:center}
+table.praytable td{padding:6px 2px;text-align:center;border-top:1px solid var(--line)}
+table.praytable td:first-child,table.praytable th:first-child{text-align:left;font-weight:700;white-space:nowrap}
+.prayline{display:flex;gap:6px;align-items:flex-start;font-size:.88rem;color:var(--muted);background:var(--surface-2);border-radius:10px;padding:8px 10px}
+.prayline b{color:var(--fg);font-variant-numeric:tabular-nums}
+.praysheet>*{flex-shrink:0}
