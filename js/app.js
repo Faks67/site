@@ -593,7 +593,6 @@ function vAccueil() {
     </div>
     <div class="card next"><span class="eyebrow">Prochain rendez-vous</span>
       ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}${presenceCtl(o)}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
-      <button class="btn" data-go="calendrier" style="align-self:flex-start">${ico('cal')} Calendrier</button>
     </div>
   </div>
   ${prayCard()}
