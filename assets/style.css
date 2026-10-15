@@ -506,16 +506,33 @@ body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
   .hero .main .herotxt,.hero .main .herobtns{display:none}
   .hero .main .eyebrow{font-size:.68rem}
   .hands{width:96px;right:-10px;bottom:-18px}
-  .hero .main.withphoto{padding-right:128px;min-height:96px;padding-bottom:16px}
-  .vitrine{position:absolute;inset:4px 4px -4px auto;width:118px;height:auto;margin:0;align-self:auto}
+  /* La photo sort du bandeau par le haut : plus grande et nette */
+  .hero:has(.withphoto){margin-top:46px}
+  .hero .main.withphoto{overflow:visible;padding-right:170px;min-height:104px;padding-bottom:16px}
+  .vitrine{position:absolute;inset:-58px -6px 0 auto;width:178px;height:auto;margin:0;align-self:auto;z-index:1}
+  .vitrine img{max-height:100%}
+  .vglow{width:90%;bottom:8%}
 }
+/* Onglet Présences */
+.preslist{display:flex;flex-direction:column;gap:10px}
+.presrow{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px 14px;border-left:4px solid var(--k)}
+.presrow.off{background:color-mix(in srgb,var(--c-red) 7%,var(--surface))}
+.pdate{text-align:center;font-family:var(--display);line-height:1}
+.pdate b{display:block;font-size:1.6rem;font-variant-numeric:tabular-nums}
+.pdate small{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.pinfo{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pinfo small{color:var(--muted);font-size:.8rem}
+.pinfo .pabs{color:var(--c-red)}
+.presrow .seg button{padding:7px 12px;font-size:.85rem}
+.presrow .seg button.no[aria-pressed="true"]{background:color-mix(in srgb,var(--c-red) 16%,var(--surface));color:var(--c-red)}
+@media (max-width:560px){.presrow{grid-template-columns:44px minmax(0,1fr)}.presrow .seg{grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr}}
 /* Cartes de l'accueil (un toucher : détail ; deux : onglet) */
 .stats{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
-.stat{font:inherit;color:inherit;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:1px;border-top:4px solid var(--k,var(--line));touch-action:manipulation;user-select:none;-webkit-user-select:none;transition:transform .12s ease,box-shadow .12s ease}
-.stat:hover{box-shadow:var(--shadow)}
+/* Même forme que les anciennes cartes, teintées de leur couleur en transparence */
+.stat{font:inherit;color:inherit;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:1px;background:color-mix(in srgb,var(--k) 12%,transparent);border-color:color-mix(in srgb,var(--k) 30%,transparent);touch-action:manipulation;user-select:none;-webkit-user-select:none;transition:transform .12s ease}
 .stat:active{transform:scale(.97)}
 .stat b{color:var(--k,var(--fg))}
-.stat small{font-size:.72rem;color:var(--muted);margin-top:2px}
+.stat small{font-size:.72rem;color:var(--muted)}
 .stathint{font-size:.75rem;color:var(--muted);margin-top:6px}
 @media (max-width:860px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stats .stat:last-child:nth-child(odd){grid-column:span 2}}
 
