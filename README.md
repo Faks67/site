@@ -41,6 +41,13 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 2. **Autorisations** : dans *Administration > Autorisations*, cocher *Réclamations* pour les chefs qui peuvent demander un remboursement, et *Remboursements* pour la personne qui rembourse (elle voit toutes les demandes et valide les remboursements). Les administrateurs ont les deux.
 3. Les tickets de caisse sont rangés dans un espace privé à part (`justificatifs`) : seuls l'auteur de la demande et la personne chargée des remboursements peuvent les voir.
 
+## Mise à jour 6 : présences, notifications par canal et messages non lus
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/06-presences-notifications.sql` et cliquer sur *Run*.
+2. **Fonction d'envoi des notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau contenu de `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Elle envoie maintenant les messages de chaque canal aux chefs qui l'ont choisi.
+3. **Présences** : chaque chef est présent par défaut. Il indique son absence depuis l'accueil (prochain rendez-vous) ou en ouvrant l'événement dans le calendrier. Les personnes autorisées sur le calendrier peuvent marquer n'importe quel chef absent.
+4. **Notifications** : chacun choisit ses canaux avec la cloche en haut de l'écran (par défaut : les annonces).
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
