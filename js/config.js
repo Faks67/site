@@ -5,4 +5,4 @@ export const SUPABASE_URL = 'https://kmwomorxkudupzkaxqgg.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_IAOikairpDnCkT5gQ3coqA_fcEknQkn';
 // Clé GIPHY pour les GIF de la discussion (gratuite : developers.giphy.com > Create an App > API).
 // Elle aussi est faite pour être visible dans un site web.
-export const GIPHY_KEY = '';
+export const GIPHY_KEY = 'AJdc5ojx7VirvNNOc5urAf5xexVuIr6P';
