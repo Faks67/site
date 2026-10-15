@@ -48,6 +48,12 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
 3. **Présences** : chaque chef est présent par défaut. Il indique son absence depuis l'accueil (prochain rendez-vous) ou en ouvrant l'événement dans le calendrier. Les personnes autorisées sur le calendrier peuvent marquer n'importe quel chef absent.
 4. **Notifications** : chacun choisit ses canaux avec la cloche en haut de l'écran (par défaut : les annonces).
 
+## Mise à jour 7 : réponses et GIF dans la discussion
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/07-reponses-gif.sql` et cliquer sur *Run*.
+2. **Clé GIPHY** (gratuite) : sur [developers.giphy.com](https://developers.giphy.com/), *Create an App* > *API*, puis copier la clé dans `GIPHY_KEY` du fichier `js/config.js`.
+3. Dans la discussion : appui long sur un message pour réagir, répondre, copier ou supprimer ; glisser un message vers la droite pour y répondre.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
