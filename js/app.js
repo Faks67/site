@@ -40,7 +40,8 @@ const ICONS = {
   belloff: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>',
-  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>'
+  check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
+  poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -57,7 +58,8 @@ const S = {
   vitrine: null, vitrineBusy: false,
   reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false,
   absences: [], notifCh: ['annonces'], unread: {}, sheet: null,
-  picker: null, gifQ: '', gifs: [], gifErr: '', replyTo: null
+  picker: null, gifQ: '', gifs: [], gifErr: '', replyTo: null,
+  reads: {}, votes: {}, pollDraft: null, mention: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -77,6 +79,9 @@ const PERMS = [
 const can = (p) => !!S.me && (S.me.is_admin || (S.me.permissions || []).includes(p));
 const canAdminPage = () => can('membres');
 const canRecl = () => can('reclamation') || can('remboursement');
+// Canaux de discussion : ceux des pôles sont réservés aux chefs du pôle (même règle que supabase/09-sondages-vu-mentions.sql)
+const seesChan = (m, id) => { const c = CHANNELS.find((x) => x.id === id); return !!m && !!c && (!c.pole || m.is_admin || m.pole_id === id || (m.chat_channels || []).includes(id)); };
+const myChannels = () => CHANNELS.filter((c) => seesChan(S.me, c.id));
 const ROLES = { principale: 'Cheffe principale', doyenne: 'Doyenne', chef: 'Chef / cheftaine', stagiaire: 'Stagiaire' };
 
 /* ---------- Connexion ---------- */
@@ -202,16 +207,21 @@ async function clearVitrine() {
   S.vitrine = null; render(); toast("Photo de l'accueil retirée");
 }
 async function loadMessages(ch) {
-  const sig = () => JSON.stringify([S.msgs[ch], (S.msgs[ch] || []).map((m) => S.reacts[m.id])]);
+  const sig = () => JSON.stringify([S.msgs[ch], (S.msgs[ch] || []).map((m) => [S.reacts[m.id], S.votes[m.id]]), S.reads[ch]]);
   const had = !!S.msgs[ch], before = sig();
   const { data, error } = await sb.from('messages').select('*').eq('channel', ch).order('created_at', { ascending: false }).limit(200);
   if (error) return fail(error);
   S.msgs[ch] = data.reverse();
-  const ids = data.map((m) => m.id);
-  if (ids.length) {
-    const r = await sb.from('message_reactions').select('message_id, member_id, emoji').in('message_id', ids);
-    if (!r.error) { ids.forEach((id) => (S.reacts[id] = [])); r.data.forEach((x) => S.reacts[x.message_id].push(x)); }
-  }
+  const ids = data.map((m) => m.id), polls = data.filter((m) => m.poll_options).map((m) => m.id);
+  // Réactions, votes des sondages et lectures du canal (« vu par ») ; sans la mise à jour 9, les deux derniers restent vides
+  const [r, v, rd] = await Promise.all([
+    ids.length ? sb.from('message_reactions').select('message_id, member_id, emoji').in('message_id', ids) : null,
+    polls.length ? sb.from('poll_votes').select('message_id, member_id, option_idx').in('message_id', polls) : null,
+    sb.from('chat_reads').select('member_id, read_at').eq('channel', ch)
+  ]);
+  if (r && !r.error) { ids.forEach((id) => (S.reacts[id] = [])); r.data.forEach((x) => S.reacts[x.message_id].push(x)); }
+  if (v && !v.error) { polls.forEach((id) => (S.votes[id] = [])); v.data.forEach((x) => S.votes[x.message_id].push(x)); }
+  if (!rd.error) S.reads[ch] = Object.fromEntries(rd.data.map((x) => [x.member_id, x.read_at]));
   if (viewingChat() && S.chan === ch) markRead(ch);
   if (S.view === 'discussion' && S.chan === ch && (!had || sig() !== before)) patchChat(!had);
 }
@@ -240,12 +250,29 @@ function startRealtime() {
       if (S.reacts[x.message_id]) S.reacts[x.message_id] = S.reacts[x.message_id].filter((y) => !(y.member_id === x.member_id && y.emoji === x.emoji));
       if (S.view === 'discussion') patchChat();
     })
+    // Sondages : votes des autres chefs
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'poll_votes' }, ({ new: x }) => {
+      const l = S.votes[x.message_id] || (S.votes[x.message_id] = []);
+      if (!l.some((y) => y.member_id === x.member_id && y.option_idx === x.option_idx)) l.push(x);
+      paintVotes(x.message_id);
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'poll_votes' }, ({ old: x }) => {
+      if (S.votes[x.message_id]) S.votes[x.message_id] = S.votes[x.message_id].filter((y) => !(y.member_id === x.member_id && y.option_idx === x.option_idx));
+      paintVotes(x.message_id);
+    })
+    // « Vu par » : un chef vient de lire un canal
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_reads' }, ({ new: x }) => {
+      if (!x?.channel || x.member_id === S.me?.id) return;
+      (S.reads[x.channel] || (S.reads[x.channel] = {}))[x.member_id] = x.read_at;
+      if (S.sheet?.startsWith('seen:')) return render();
+      if (S.view === 'discussion' && S.chan === x.channel) patchChat();
+    })
     .subscribe();
 }
 
 /* ---------- Messages non lus (bulle sur l'onglet Discussion) ---------- */
 const viewingChat = () => S.view === 'discussion' && !document.hidden;
-const unreadTotal = () => CHANNELS.reduce((t, c) => t + (S.unread[c.id] || 0), 0);
+const unreadTotal = () => myChannels().reduce((t, c) => t + (S.unread[c.id] || 0), 0);
 const fmtN = (n) => (n > 99 ? '99+' : String(n));
 async function loadUnread() {
   const r = await sb.rpc('unread_counts'); if (r.error) return;
@@ -264,7 +291,7 @@ function paintBadges() {
   const n = unreadTotal();
   document.querySelectorAll('[data-badge="total"]').forEach((el) => { el.textContent = fmtN(n); el.hidden = !n; });
   document.querySelectorAll('[data-badge-ch]').forEach((el) => { const k = S.unread[el.dataset.badgeCh] || 0; el.textContent = fmtN(k); el.hidden = !k; });
-  const dot = $('#chanDot'); if (dot) dot.hidden = !CHANNELS.some((c) => c.id !== S.chan && S.unread[c.id]);
+  const dot = $('#chanDot'); if (dot) dot.hidden = !myChannels().some((c) => c.id !== S.chan && S.unread[c.id]);
   try { (n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.())?.catch?.(() => {}); } catch (e) {}
 }
 
@@ -986,7 +1013,159 @@ function reactionsHtml(m) {
 }
 const GIF_RE = /^https:\/\/(media[0-9]*|i)\.giphy\.com\/[A-Za-z0-9/._-]+$/;
 const findMsg = (id) => Object.values(S.msgs).flat().find((x) => x.id === id);
-const msgPreview = (o) => (o.gif_url ? '🎞️ GIF' : o.body);
+const msgPreview = (o) => (o.gif_url ? '🎞️ GIF' : o.poll_options ? '📊 ' + o.body : o.body);
+
+/* ---------- Mentions (@chef), comme dans WhatsApp ---------- */
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Chefs qu'on peut mentionner dans un canal : ceux qui y ont accès
+const taggable = (ch) => S.members.filter((x) => x.id !== S.me.id && seesChan(x, ch));
+const mentionRe = (m) => new RegExp('@' + escRe(m.first_name) + '(?![\\p{L}\\p{N}_-])', 'iu');
+const mentionsMe = (m) => m.member_id !== S.me.id && (m.mentions || []).includes(S.me.id);
+// Texte du message avec les @Prénom mentionnés mis en valeur
+function bodyHtml(m) {
+  const ids = m.mentions || [];
+  const names = ids.map(member).filter(Boolean).sort((a, b) => b.first_name.length - a.first_name.length);
+  if (!names.length) return esc(m.body);
+  const re = new RegExp('@(' + names.map((x) => escRe(x.first_name)).join('|') + ')(?![\\p{L}\\p{N}_-])', 'giu');
+  let out = '', last = 0;
+  for (const hit of m.body.matchAll(re)) {
+    const who = names.find((x) => fold(x.first_name) === fold(hit[1]));
+    out += esc(m.body.slice(last, hit.index)) + `<span class="tag${who?.id === S.me.id ? ' me' : ''}">${esc(hit[0])}</span>`;
+    last = hit.index + hit[0].length;
+  }
+  return out + esc(m.body.slice(last));
+}
+// Pendant l'écriture : « @ » suivi du début d'un prénom propose les chefs du canal
+function mentionCheck() {
+  const i = $('#msgIn'); if (!i) return;
+  const before = i.value.slice(0, i.selectionStart ?? i.value.length);
+  const hit = /(^|\s)@([\p{L}'-]{0,20})$/u.exec(before);
+  const q = hit ? fold(hit[2]) : null;
+  const list = hit ? taggable(S.chan).filter((x) => fold(x.first_name).startsWith(q)).slice(0, 6) : [];
+  S.mention = list.length ? { start: before.length - hit[2].length - 1, end: before.length, list, sel: 0 } : null;
+  paintMentions();
+}
+function paintMentions() {
+  const box = $('#mentions'); if (!box) return;
+  const mt = S.mention;
+  box.hidden = !mt;
+  box.innerHTML = mt ? mt.list.map((x, n) => `<button type="button" role="option" data-tag="${x.id}" aria-selected="${n === mt.sel}" style="--k:${grp(x.group_id)?.color || 'var(--muted)'}"><span class="av">${esc(initial(x))}</span><b>${esc(display(x))}</b>${x.pole_id ? `<small>${esc(pole(x.pole_id)?.short_name || '')}</small>` : ''}</button>`).join('') : '';
+}
+function pickMention(id) {
+  const i = $('#msgIn'), mt = S.mention, x = member(id); if (!i || !mt || !x) return;
+  const ins = '@' + x.first_name + ' ';
+  i.value = i.value.slice(0, mt.start) + ins + i.value.slice(mt.end);
+  const p = mt.start + ins.length; i.focus(); i.setSelectionRange(p, p);
+  S.mention = null; paintMentions(); growMsg();
+}
+// Au moment d'envoyer : chefs dont le @Prénom est dans le texte
+const findMentions = (body) => (body.includes('@') ? taggable(S.chan).filter((x) => mentionRe(x).test(body)).map((x) => x.id) : []);
+
+/* ---------- « Vu par » : coches sous mes messages ---------- */
+// Chefs qui ont un compte et accès au canal, sauf l'auteur
+const audience = (m) => S.members.filter((x) => x.user_id && x.id !== m.member_id && seesChan(x, m.channel));
+function seenBy(m) {
+  const rd = S.reads[m.channel] || {}, at = new Date(m.created_at);
+  const aud = audience(m);
+  return { aud, seen: aud.filter((x) => rd[x.id] && new Date(rd[x.id]) >= at) };
+}
+function ticksHtml(m) {
+  const { aud, seen } = seenBy(m);
+  const all = aud.length && seen.length === aud.length;
+  const label = !seen.length ? 'Envoyé, pas encore vu' : all ? 'Vu par tout le monde' : `Vu par ${seen.length} sur ${aud.length}`;
+  return `<button type="button" class="ticks${all ? ' all' : seen.length ? ' some' : ''}" data-seen="${m.id}" aria-label="${label}" title="${label}">${seen.length ? '✓✓' : '✓'}</button>`;
+}
+function seenSheet(id) {
+  const m = findMsg(id);
+  if (!m) return '';
+  const { aud, seen } = seenBy(m), not = aud.filter((x) => !seen.includes(x));
+  const li = (x) => `<li style="--k:${grp(x.group_id)?.color || 'var(--muted)'}"><span class="av">${esc(initial(x))}</span>${esc(display(x))}</li>`;
+  return `<div class="modal" data-closemodal><div class="card sheet seensheet" role="dialog" aria-modal="true" aria-labelledby="seenTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="seenTitle">Infos du message</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <div class="seenq">${esc(msgPreview(m))}</div>
+    <h3><span class="ticks all">✓✓</span> Vu par ${seen.length}</h3>${seen.length ? `<ul class="seenlist">${seen.map(li).join('')}</ul>` : '<p class="hint">Personne pour l\'instant.</p>'}
+    <h3><span class="ticks">✓</span> Pas encore vu · ${not.length}</h3>${not.length ? `<ul class="seenlist">${not.map(li).join('')}</ul>` : '<p class="hint">Tout le monde l\'a vu.</p>'}
+    <small class="hint">Seuls les chefs qui ont accès à ce canal et un compte sont comptés.</small>
+  </div></div>`;
+}
+
+/* ---------- Sondages, comme dans WhatsApp ---------- */
+function pollHtml(m) {
+  const votes = S.votes[m.id] || [], voters = new Set(votes.map((v) => v.member_id)).size;
+  return `<div class="poll"><b class="pq">${esc(m.body)}</b><small class="pmode">${ico('poll', 13)} ${m.poll_multi ? 'Choisissez une ou plusieurs réponses' : 'Choisissez une réponse'}</small>
+    ${m.poll_options.map((o, i) => {
+      const who = votes.filter((v) => v.option_idx === i), mine = who.some((v) => v.member_id === S.me.id);
+      const pct = voters ? Math.round((who.length / voters) * 100) : 0;
+      return `<button type="button" class="popt${mine ? ' on' : ''}" data-vote="${m.id}" data-opt="${i}" aria-pressed="${mine}"><span class="pbox${m.poll_multi ? ' sq' : ''}" aria-hidden="true"></span><span class="ptxt">${esc(o)}</span><span class="pn">${who.length}</span><span class="pbar" aria-hidden="true"><i style="width:${pct}%"></i></span></button>`;
+    }).join('')}
+    <button type="button" class="pollmore" data-votes="${m.id}">Voir les votes${voters ? ` · ${voters} participant${voters > 1 ? 's' : ''}` : ''}</button></div>`;
+}
+// Met à jour le sondage affiché (et la fenêtre des votes si elle est ouverte)
+function paintVotes(id) {
+  if (S.sheet === 'votes:' + id) return render();
+  const box = document.querySelector(`.msg[data-mid="${id}"] .poll`), m = findMsg(id);
+  if (box && m) box.outerHTML = pollHtml(m);
+}
+async function vote(id, i) {
+  const m = findMsg(id); if (!m) return;
+  const before = (S.votes[id] || []).slice();
+  const had = before.some((v) => v.member_id === S.me.id && v.option_idx === i);
+  let next = had ? before.filter((v) => !(v.member_id === S.me.id && v.option_idx === i)) : before.filter((v) => m.poll_multi || v.member_id !== S.me.id);
+  if (!had) next = next.concat({ message_id: id, member_id: S.me.id, option_idx: i });
+  S.votes[id] = next; paintVotes(id); navigator.vibrate?.(8);
+  const r = await sb.rpc('vote_poll', { p_message: id, p_option: i });
+  if (r.error) { S.votes[id] = before; paintVotes(id); fail(needSql9(r.error)); }
+}
+function votesSheet(id) {
+  const m = findMsg(id);
+  if (!m?.poll_options) return '';
+  const votes = S.votes[id] || [];
+  return `<div class="modal" data-closemodal><div class="card sheet seensheet" role="dialog" aria-modal="true" aria-labelledby="vtTitle">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div><span class="eyebrow">Sondage</span><h2 id="vtTitle" style="margin-top:4px">${esc(m.body)}</h2></div><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    ${m.poll_options.map((o, i) => {
+      const who = votes.filter((v) => v.option_idx === i).map((v) => member(v.member_id)).filter(Boolean);
+      return `<div class="vtopt"><div class="row" style="justify-content:space-between;flex-wrap:nowrap"><b>${esc(o)}</b><span class="pill">${who.length} vote${who.length > 1 ? 's' : ''}</span></div>
+        ${who.length ? `<ul class="seenlist">${who.map((x) => `<li style="--k:${grp(x.group_id)?.color || 'var(--muted)'}"><span class="av">${esc(initial(x))}</span>${esc(display(x))}</li>`).join('')}</ul>` : '<p class="hint">Aucun vote.</p>'}</div>`;
+    }).join('')}
+  </div></div>`;
+}
+const POLL_MAX = 12;
+function pollSheet() {
+  const d = S.pollDraft || (S.pollDraft = { q: '', opts: ['', ''], multi: false });
+  // Comme dans WhatsApp : une case vide de plus apparaît dès qu'on remplit la dernière
+  const opts = d.opts.slice(); if (opts[opts.length - 1].trim() && opts.length < POLL_MAX) opts.push('');
+  d.opts = opts;
+  return `<div class="modal" data-closemodal><form class="card sheet" id="pollForm" role="dialog" aria-modal="true" aria-labelledby="plTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="plTitle">Créer un sondage</h2><button type="button" class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <label class="field" for="plQ">Question<input id="plQ" data-pollq maxlength="300" placeholder="Poser une question" value="${esc(d.q)}" required autocomplete="off"></label>
+    <div class="field">Options<div class="ploptions">${opts.map((o, i) => `<input data-pollopt="${i}" maxlength="100" placeholder="Option ${i + 1}" value="${esc(o)}" aria-label="Option ${i + 1}" autocomplete="off">`).join('')}</div>
+      <small class="hint">Jusqu'à ${POLL_MAX} options.</small></div>
+    <div class="switches"><button type="button" class="switchrow" role="switch" data-pollmulti aria-checked="${d.multi}"><span>Autoriser plusieurs réponses</span><i class="sw" aria-hidden="true"></i></button></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-closemodal>Annuler</button><button class="btn primary" type="submit">Envoyer</button></div>
+  </form></div>`;
+}
+// Ajoute la case suivante sans redessiner la fenêtre (le clavier reste ouvert)
+function pollInput(el) {
+  const d = S.pollDraft; if (!d) return;
+  if (el.dataset.pollq !== undefined) { d.q = el.value; return; }
+  const i = Number(el.dataset.pollopt); d.opts[i] = el.value;
+  const box = el.parentElement;
+  if (i === d.opts.length - 1 && el.value.trim() && d.opts.length < POLL_MAX) {
+    d.opts.push('');
+    box.insertAdjacentHTML('beforeend', `<input data-pollopt="${d.opts.length - 1}" maxlength="100" placeholder="Option ${d.opts.length}" aria-label="Option ${d.opts.length}" autocomplete="off">`);
+  }
+}
+async function submitPoll() {
+  const d = S.pollDraft; if (!d) return;
+  const q = d.q.trim(), opts = [...new Set(d.opts.map((o) => o.trim()).filter(Boolean))];
+  if (!q) return toast('Écrivez la question du sondage');
+  if (opts.length < 2) return toast('Ajoutez au moins deux options différentes');
+  S.sheet = null; render();
+  const ok = await sendMessage({ body: q, poll_options: opts, poll_multi: !!d.multi });
+  if (ok) S.pollDraft = null; else { S.sheet = 'poll'; render(); }
+}
+const needSql9 = (e) => (['PGRST204', 'PGRST202', '42P01', '42883'].includes(e?.code) || /poll_|mentions|vote_poll/.test(e?.message || '') ? new Error('lancez d\'abord la mise à jour SQL 09 dans Supabase') : e);
 // Message cité au-dessus d'une réponse, en couleur transparente ; un toucher remonte jusqu'à l'original
 function quoteHtml(m) {
   if (!m.reply_to && !S.deletedReplies?.has(m.id)) return '';
@@ -994,7 +1173,7 @@ function quoteHtml(m) {
   const k = o?.member_id === S.me.id ? 'var(--green)' : grp(a?.group_id)?.color || 'var(--muted)';
   return `<button class="quote" ${o ? `data-jump="${o.id}"` : ''} style="--q:${k}"><b>${o ? (o.member_id === S.me.id ? 'Vous' : esc(display(a))) : 'Réponse'}</b><span>${o ? esc(msgPreview(o)) : m.reply_to ? 'Message plus ancien' : 'Message supprimé'}</span></button>`;
 }
-const chanObj = () => CHANNELS.find((x) => x.id === S.chan) || CHANNELS[0];
+const chanObj = () => myChannels().find((x) => x.id === S.chan) || CHANNELS[0];
 const chanLabel = (c) => `${c.announce ? '📣' : '#'} ${esc(c.name)}`;
 const hm = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 function dayLabel(d) {
@@ -1014,13 +1193,13 @@ function msgsHtml() {
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
     prev = m;
-    const gif = m.gif_url && GIF_RE.test(m.gif_url);
+    const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length;
     const body = gif
       ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
-      : `<p>${esc(m.body)}</p>`;
-    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}" style="--k:${k}" data-mid="${m.id}">
+      : poll ? pollHtml(m) : `<p>${bodyHtml(m)}</p>`;
+    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
-      <div class="bubble${gif ? ' isgif' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
+      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
       ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
   }).join('');
 }
@@ -1034,7 +1213,8 @@ function patchChat(toBottom) {
   paintBadges();
 }
 function vChat() {
-  const c = chanObj(), other = CHANNELS.some((x) => x.id !== S.chan && S.unread[x.id]);
+  if (!seesChan(S.me, S.chan)) { S.chan = 'annonces'; if (!S.msgs.annonces) loadMessages('annonces'); }
+  const c = chanObj(), other = myChannels().some((x) => x.id !== S.chan && S.unread[x.id]);
   return `<div class="view chatview">
   <div class="chathead"><h1>Discussion</h1>
     <button class="chanbtn" data-chanpick aria-haspopup="dialog" aria-label="Canal : ${esc(c.name)}. Changer de canal"><span>${chanLabel(c)}</span><i class="cdot" id="chanDot" ${other ? '' : 'hidden'}></i>${ico('down')}</button></div>
@@ -1042,7 +1222,8 @@ function vChat() {
     <div class="msgs" id="msgs" data-chan="${S.chan}">${msgsHtml()}</div>
     <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
     <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
-    <form class="compose" id="compose"><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
+    <div class="mentions" id="mentions" role="listbox" aria-label="Mentionner un chef" hidden></div>
+    <form class="compose" id="compose"><button type="button" class="cbtn pollbtn" data-pollnew aria-label="Créer un sondage">${ico('poll')}</button><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
   </div></div>`;
 }
 
@@ -1148,8 +1329,9 @@ function closePicker() {
 }
 async function sendMessage(row) {
   const chan = S.chan, reply = S.replyTo;
-  const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...row }).select().single();
-  if (r.error) { fail(needSql7(r.error)); return null; }
+  const tags = row.gif_url ? [] : findMentions(row.body);
+  const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...(tags.length ? { mentions: tags } : {}), ...row }).select().single();
+  if (r.error) { fail(row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
   if (reply && S.replyTo === reply) setReply(null);
   const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
   if (S.chan === chan) patchChat(true);
@@ -1174,7 +1356,7 @@ function openMsgMenu(id) {
   msgMenu.innerHTML = `<div class="mmgroup" role="dialog" aria-label="Actions sur le message">
     <div class="mmreact">${QUICK_REACTIONS.map((e) => `<button type="button" data-mmreact="${e}" aria-label="Réagir ${e}" ${(S.reacts[id] || []).some((x) => x.member_id === S.me.id && x.emoji === e) ? 'class="on"' : ''}>${e}</button>`).join('')}</div>
     <div class="mmclone${mine ? ' mine' : ''}">${bub.outerHTML}</div>
-    <div class="mmlist"><button type="button" data-mm="reply">↩<span>Répondre</span></button>${m.gif_url ? '' : '<button type="button" data-mm="copy">⧉<span>Copier</span></button>'}${canDel ? '<button type="button" class="danger" data-mm="del">🗑<span>Supprimer</span></button>' : ''}</div></div>`;
+    <div class="mmlist"><button type="button" data-mm="reply">↩<span>Répondre</span></button>${mine ? '<button type="button" data-mm="info">ⓘ<span>Infos · vu par</span></button>' : ''}${m.poll_options ? '<button type="button" data-mm="votes">📊<span>Voir les votes</span></button>' : ''}${m.gif_url ? '' : '<button type="button" data-mm="copy">⧉<span>Copier</span></button>'}${canDel ? '<button type="button" class="danger" data-mm="del">🗑<span>Supprimer</span></button>' : ''}</div></div>`;
   msgMenu.dataset.id = id; msgMenu.hidden = false;
   // Le groupe (réactions, message, actions) se place sur le message, sans sortir de l'écran
   const r = bub.getBoundingClientRect(), g = msgMenu.firstElementChild, vh = window.visualViewport?.height || innerHeight;
@@ -1195,6 +1377,7 @@ msgMenu.addEventListener('click', async (e) => {
   const act = e.target.closest('[data-mm]')?.dataset.mm;
   if (!act) { if (!e.target.closest('.mmgroup')) closeMsgMenu(); return; }
   if (act === 'reply') { closeMsgMenu(); return m && setReply(m); }
+  if (act === 'info' || act === 'votes') { closeMsgMenu(); S.sheet = (act === 'info' ? 'seen:' : 'votes:') + id; return render(); }
   if (act === 'copy') { closeMsgMenu(); try { await navigator.clipboard.writeText(m.body); toast('Message copié'); } catch (err) { toast('Copie impossible sur cet appareil'); } return; }
   if (act === 'del') {
     const b = e.target.closest('[data-mm]');
@@ -1216,7 +1399,7 @@ function removeMsg(id) {
 }
 function chanSheet() {
   let lastH = '';
-  const items = CHANNELS.map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="chh">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button class="chanitem" data-chan="${x.id}" aria-current="${x.id === S.chan}"><span>${chanLabel(x)}</span>${badge(x.id, true)}</button>`; }).join('');
+  const items = myChannels().map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="chh">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button class="chanitem" data-chan="${x.id}" aria-current="${x.id === S.chan}"><span>${chanLabel(x)}</span>${badge(x.id, true)}</button>`; }).join('');
   return `<div class="modal" data-closemodal><div class="card sheet chansheet" role="dialog" aria-modal="true" aria-labelledby="chTitle">
     <div class="row" style="justify-content:space-between"><h2 id="chTitle">Canaux</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>${items}</div></div>`;
 }
@@ -1230,13 +1413,13 @@ function notifSheet() {
     <div class="row" style="justify-content:space-between"><h2 id="ntTitle">Notifications</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
     ${dev}
     <div class="row" style="justify-content:space-between"><b>Me prévenir pour</b><span class="row" style="gap:6px"><button class="btn small" data-notifall="all">Tout</button><button class="btn small" data-notifall="none">Aucun</button></span></div>
-    <div class="switches">${CHANNELS.map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}
+    <div class="switches">${myChannels().map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}
       <button class="switchrow" role="switch" data-notifch="prieres" aria-checked="${S.notifCh.includes('prieres')}"><span>🕌 Heures de prière<small class="hint" style="display:block;font-weight:400">10 min avant Fajr, Dhuhr et Maghrib</small></span><i class="sw" aria-hidden="true"></i></button></div>
     <small class="hint">Vos choix valent pour tous vos appareils. Pour ne plus rien recevoir, choisissez « Aucun » ou coupez les notifications sur ce téléphone.</small>
   </div></div>`;
 }
 // Canaux de discussion + alertes de prière
-const NOTIF_IDS = () => [...CHANNELS.map((c) => c.id), 'prieres'];
+const NOTIF_IDS = () => [...myChannels().map((c) => c.id), 'prieres'];
 async function setNotifCh(next) {
   const prev = S.notifCh; S.notifCh = NOTIF_IDS().filter((id) => next.includes(id)); render();
   const r = await sb.from('notif_prefs').upsert({ member_id: S.me.id, channels: S.notifCh, updated_at: new Date().toISOString() });
@@ -1335,6 +1518,12 @@ function vAdmin() {
   const permRow = (m) => `<tr><td><b>${esc(display(m))}</b>${m.user_id ? '' : '<small style="display:block;color:var(--muted)">Pas encore de compte</small>'}</td>${m.is_admin
     ? `<td colspan="${PERMS.length}" style="color:var(--green-ink);font-weight:700">Administrateur : toutes les autorisations</td>`
     : PERMS.map(([k, l]) => `<td style="text-align:center"><input type="checkbox" data-perm="${k}" data-pmember="${m.id}" ${(m.permissions || []).includes(k) ? 'checked' : ''} aria-label="${esc(l)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
+  const poleChans = CHANNELS.filter((c) => c.pole);
+  const chatRow = (m) => `<tr><td><b>${esc(display(m))}</b><small style="display:block;color:var(--muted)">${m.pole_id ? 'Pôle : ' + esc(pole(m.pole_id)?.short_name || m.pole_id) : 'Pas de pôle'}</small></td>${m.is_admin
+    ? `<td colspan="${poleChans.length}" style="color:var(--green-ink);font-weight:700">Administrateur : tous les canaux</td>`
+    : poleChans.map((c) => m.pole_id === c.id
+      ? `<td style="text-align:center"><input type="checkbox" checked disabled title="Son pôle" aria-label="${esc(c.name)} : pôle de ${esc(display(m))}"></td>`
+      : `<td style="text-align:center"><input type="checkbox" data-chatacc="${c.id}" data-cmember="${m.id}" ${(m.chat_channels || []).includes(c.id) ? 'checked' : ''} aria-label="${esc(c.name)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
   return `<div class="view">
   <div><span class="eyebrow">${admin ? 'Réservé aux administrateurs' : 'Gestion des chefs et des groupes'}</span><h1>Administration</h1>
     <p class="lead" style="margin-top:6px">Ajoutez l'e-mail d'un chef pour lui donner accès : il pourra ensuite créer son compte depuis la page de connexion. Pour retirer un accès, effacez son e-mail ou retirez la personne.</p></div>
@@ -1346,6 +1535,9 @@ function vAdmin() {
   ${admin ? `<div class="card"><h3>Autorisations</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Cochez ce que chaque chef peut faire en plus de consulter, déposer des documents et écrire. Chaque case est enregistrée tout de suite. Seuls les administrateurs donnent des autorisations.</p>
     <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${PERMS.map(([k, l, d]) => `<th title="${esc(d)}">${esc(l)}<small>${esc(d)}</small></th>`).join('')}</tr></thead>
     <tbody>${S.members.map(permRow).join('')}</tbody></table></div></div>` : ''}
+  ${admin ? `<div class="card"><h3>Discussions des pôles</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Chaque chef voit Annonces, Général et le canal de son pôle (choisi dans « Chefs et cheftaines » ci-dessous). Cochez pour lui ouvrir aussi la discussion d'un autre pôle. Chaque case est enregistrée tout de suite.</p>
+    <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${poleChans.map((c) => `<th>${esc(c.name)}</th>`).join('')}</tr></thead>
+    <tbody>${S.members.map(chatRow).join('')}</tbody></table></div></div>` : ''}
   <div class="card"><h3 style="margin-bottom:10px">Chefs et cheftaines</h3><div class="tablewrap"><table class="admin">
     <thead><tr><th>Titre</th><th>Prénom</th><th>Groupe</th><th>Pôle</th><th>Rôle</th><th>E-mail d'accès</th><th>Admin</th><th>Accès</th><th></th></tr></thead>
     <tbody>${S.members.map(row).join('')}</tbody></table></div></div>
@@ -1634,7 +1826,8 @@ function render() {
   const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : '';
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+    : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
   root.innerHTML = `<div class="app"><aside class="side">
@@ -1680,11 +1873,12 @@ document.addEventListener('focusin', (e) => {
   if (['msgIn', 'gifQ'].includes(e.target.id)) { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); }
 });
 document.addEventListener('focusout', (e) => {
+  if (e.target.id === 'msgIn') setTimeout(() => { if (document.activeElement?.id !== 'msgIn' && S.mention) { S.mention = null; paintMentions(); } }, 150);
   if (!['msgIn', 'gifQ'].includes(e.target.id)) return;
   setTimeout(() => { if (!['msgIn', 'gifQ'].includes(document.activeElement?.id) && !S.picker) { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
 });
 // Toucher le bouton Envoyer ou Emojis ne ferme pas le clavier
-root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
+root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn, .mentions button') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
 
 /* ---------- Événements ---------- */
 root.addEventListener('click', async (e) => {
@@ -1704,7 +1898,7 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-mapidf]')) return mapInst?.flyTo({ ...IDF, speed: 1.6 });
   if (t.closest('[data-mapfr]')) return mapInst?.fitBounds([[-5.2, 41.3], [9.6, 51.1]], { padding: 30 });
   // Calendrier
-  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { S.evModal = null; S.sheet = null; return render(); }
+  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { if (S.sheet === 'poll') S.pollDraft = null; S.evModal = null; S.sheet = null; return render(); }
   // Accueil, présences, notifications, canaux
   const st = t.closest('[data-stat]'); if (st) return statClick(st.dataset.stat);
   const sg = t.closest('[data-statgo]'); if (sg) return statGo(sg.dataset.statgo);
@@ -1746,7 +1940,7 @@ root.addEventListener('click', async (e) => {
   const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; if (g.dataset.rectabgo) { S.recTab = g.dataset.rectabgo; S.recFilter = 'en_attente'; } return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
-  const ch = t.closest('[data-chan]'); if (ch) {
+  const ch = t.closest('.chanitem[data-chan]'); if (ch) {
     S.chan = ch.dataset.chan; S.sheet = null; S.replyTo = null; closePicker();
     try { history.replaceState(null, '', '#chat-' + S.chan); } catch (e) {}
     if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan);
@@ -1762,6 +1956,13 @@ root.addEventListener('click', async (e) => {
     return sendMessage({ body: 'GIF', gif_url: g.url, gif_w: g.w, gif_h: g.h });
   }
   if (t.closest('[data-replycancel]')) return setReply(null);
+  // Sondages, « vu par » et mentions
+  if (t.closest('[data-pollnew]')) { closePicker(); $('#msgIn')?.blur(); S.sheet = 'poll'; render(); $('#plQ')?.focus(); return; }
+  const pm = t.closest('[data-pollmulti]'); if (pm) { S.pollDraft.multi = !S.pollDraft.multi; pm.setAttribute('aria-checked', S.pollDraft.multi); return; }
+  const vt = t.closest('[data-vote]'); if (vt) return vote(Number(vt.dataset.vote), Number(vt.dataset.opt));
+  const vs = t.closest('[data-votes]'); if (vs) { S.sheet = 'votes:' + vs.dataset.votes; return render(); }
+  const sn = t.closest('[data-seen]'); if (sn) { S.sheet = 'seen:' + sn.dataset.seen; return render(); }
+  const tg = t.closest('[data-tag]'); if (tg) return pickMention(tg.dataset.tag);
   const mm = t.closest('[data-mmenu]'); if (mm) return openMsgMenu(Number(mm.dataset.mmenu));
   const jp = t.closest('[data-jump]'); if (jp) return jumpTo(jp.dataset.jump);
   const em = t.closest('[data-emoji]'); if (em) {
@@ -1830,6 +2031,13 @@ async function savePerm(box) {
   if (r.error) { box.checked = !box.checked; return fail(r.error); }
   m.permissions = r.data.permissions; toast('Autorisation enregistrée');
 }
+async function saveChatAccess(box) {
+  const m = member(box.dataset.cmember); if (!m) return;
+  const next = new Set(m.chat_channels || []); box.checked ? next.add(box.dataset.chatacc) : next.delete(box.dataset.chatacc);
+  const r = await sb.from('members').update({ chat_channels: [...next] }).eq('id', m.id).select().single();
+  if (r.error) { box.checked = !box.checked; return fail(needSql9(r.error)); }
+  m.chat_channels = r.data.chat_channels; toast('Accès enregistré');
+}
 root.addEventListener('change', (e) => {
   if (e.target.id === 'upFile' && e.target.files.length) addFiles(e.target.files);
   if (e.target.id === 'upPole') S.upPole = e.target.value;
@@ -1838,6 +2046,7 @@ root.addEventListener('change', (e) => {
   if (e.target.id === 'efRepeat') $('#efUntilWrap').hidden = e.target.value === 'none';
   if (e.target.id === 'efStart' && ($('#efEnd').value < e.target.value || !$('#efEnd').value)) $('#efEnd').value = e.target.value;
   if (e.target.dataset.perm) savePerm(e.target);
+  if (e.target.dataset.chatacc) saveChatAccess(e.target);
   if (e.target.id === 'mapPeriod') { S.mapPeriod = Number(e.target.value); refreshMap(); }
 });
 root.addEventListener('input', (e) => { if (e.target.id === 'efAddr') addrInput(e.target); });
@@ -1847,9 +2056,10 @@ root.addEventListener('submit', async (e) => {
   const id = e.target.id;
   if (id === 'compose') {
     e.preventDefault(); const v = $('#msgIn').value.trim(); if (!v) return;
-    $('#msgIn').value = ''; growMsg();
+    $('#msgIn').value = ''; growMsg(); S.mention = null; paintMentions();
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
+  if (id === 'pollForm') { e.preventDefault(); return submitPoll(); }
   if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
   if (id === 'ppForm') { e.preventDefault(); return searchPrayPlace($('#ppQ').value); }
   if (id === 'recForm') { e.preventDefault(); if (!S.recBusy) submitRecl(e.target); return; }
@@ -1863,13 +2073,22 @@ root.addEventListener('submit', async (e) => {
     render(); toast('Personne ajoutée');
   }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen || S.sheet)) { S.evModal = null; S.moreOpen = false; S.sheet = null; render(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen || S.sheet)) { if (S.sheet === 'poll') S.pollDraft = null; S.evModal = null; S.moreOpen = false; S.sheet = null; render(); } });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(e); }, true);
 // Sur ordinateur, Entrée envoie (Maj + Entrée pour aller à la ligne) ; sur téléphone, Entrée va à la ligne
 const touchScreen = () => matchMedia('(pointer: coarse)').matches;
-root.addEventListener('keydown', (e) => { if (e.target.id === 'msgIn' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); } });
+root.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'msgIn' || e.isComposing) return;
+  // Liste des mentions ouverte : flèches pour choisir, Entrée ou Tab pour valider, Échap pour fermer
+  const mt = S.mention;
+  if (mt && ['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); mt.sel = (mt.sel + (e.key === 'ArrowDown' ? 1 : -1) + mt.list.length) % mt.list.length; return paintMentions(); }
+  if (mt && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) { e.preventDefault(); return pickMention(mt.list[mt.sel].id); }
+  if (mt && e.key === 'Escape') { e.stopPropagation(); S.mention = null; return paintMentions(); }
+  if (e.key === 'Enter' && !e.shiftKey && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); }
+});
 root.addEventListener('input', (e) => {
-  if (e.target.id === 'msgIn') growMsg();
+  if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); }
+  if (e.target.matches('[data-pollq], [data-pollopt]')) pollInput(e.target);
   if (e.target.id === 'gifQ') { S.gifQ = e.target.value; clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs(S.gifQ.trim()), 350); }
 });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'gifQ' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
@@ -1877,7 +2096,7 @@ root.addEventListener('keydown', (e) => { if (e.target.id === 'gifQ' && e.key ==
 /* Appui long sur un message (menu d'actions) et glisser vers la droite pour répondre, comme dans WhatsApp */
 let mpress = null, mswipe = null, mLongDone = false;
 root.addEventListener('pointerdown', (e) => {
-  const msg = e.target.closest('#msgs .msg'); if (!msg || e.target.closest('.react, .mmore') || e.button > 0) return;
+  const msg = e.target.closest('#msgs .msg'); if (!msg || e.target.closest('.react, .mmore, .ticks, .popt, .pollmore') || e.button > 0) return;
   const id = Number(msg.dataset.mid);
   mLongDone = false;
   mpress = { x: e.clientX, y: e.clientY, t: setTimeout(() => { mpress = null; mswipe = null; mLongDone = true; openMsgMenu(id); }, 430) };
@@ -1950,7 +2169,7 @@ async function boot() {
   const h = (location.hash || '').slice(1), hc = /^chat-([a-z]+)$/.exec(h);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
   else if (h === 'prieres') { S.view = 'accueil'; S.sheet = 'prieres'; }
-  else if (hc && CHANNELS.some((c) => c.id === hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
+  else if (hc && seesChan(S.me, hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
   else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
   if (S.view === 'discussion' && S.me) loadMessages(S.chan);
@@ -1966,7 +2185,7 @@ sb.auth.onAuthStateChange((event, session) => {
 // Ouverture depuis une notification : #annonces ou #chat-<canal>
 window.addEventListener('hashchange', () => {
   const m = /^#(?:chat-)?([a-z]+)$/.exec(location.hash);
-  const ch = m && CHANNELS.find((c) => c.id === m[1] && (location.hash.startsWith('#chat-') || c.id === 'annonces'));
+  const ch = m && myChannels().find((c) => c.id === m[1] && (location.hash.startsWith('#chat-') || c.id === 'annonces'));
   if (ch && S.me) { S.view = 'discussion'; S.chan = ch.id; S.sheet = null; loadMessages(ch.id); render(); }
 });
 boot();

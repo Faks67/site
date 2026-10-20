@@ -63,6 +63,17 @@ Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/priere
 3. **Lieu de l'unité** : un administrateur ouvre la carte « Prochaine prière » de l'accueil et cherche l'adresse de référence (Paris par défaut).
 4. **Notifications** : chacun coche « Heures de prière » avec la cloche pour être prévenu 10 minutes avant Fajr, Dhuhr et Maghrib.
 
+## Mise à jour 9 : discussions des pôles, sondages, « vu par » et mentions
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/09-sondages-vu-mentions.sql` et cliquer sur *Run*.
+2. **Fonction d'envoi des notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Elle n'envoie plus les messages d'un pôle qu'aux chefs qui y ont accès, et prévient les chefs mentionnés.
+3. **Pôle de chaque chef** : dans *Administration > Chefs et cheftaines*, vérifier la colonne *Pôle*. Un chef voit *Annonces*, *Général* et le canal de son pôle seulement (un chef sans pôle ne voit aucun canal de pôle). Les administrateurs voient tout.
+4. **Accès à d'autres pôles** : dans *Administration > Discussions des pôles*, cocher les canaux supplémentaires qu'un chef peut voir. Seuls les administrateurs peuvent le faire.
+5. Dans la discussion :
+   - **Sondage** : bouton 📊 à gauche de la zone d'écriture (une ou plusieurs réponses) ; toucher un choix pour voter, « Voir les votes » pour savoir qui a voté quoi.
+   - **Vu par** : sous mes messages, ✓ = envoyé, ✓✓ = vu par certains, ✓✓ bleues = vu par tout le monde. Toucher les coches (ou appui long > *Infos*) pour voir qui l'a vu.
+   - **Mentionner un chef** : taper `@` puis le début du prénom et choisir dans la liste. Le chef mentionné reçoit une notification même s'il ne suit pas ce canal.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -77,6 +88,7 @@ Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/priere
 | `supabase/03-autorisations-calendrier.sql` | Autorisations par type d'action et champs du calendrier |
 | `supabase/04-adresses-groupes.sql` | Adresse, coordonnées et groupes des événements |
 | `supabase/05-reclamations.sql` | Réclamations, justificatifs et autorisations de remboursement |
+| `supabase/09-sondages-vu-mentions.sql` | Canaux des pôles réservés, sondages, « vu par » et mentions |
 | `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
 | `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
 | `.github/workflows/keepalive.yml` | Appel automatique tous les 3 jours pour éviter la mise en veille de Supabase |

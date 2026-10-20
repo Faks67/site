@@ -738,3 +738,51 @@ table.praytable td:first-child,table.praytable th:first-child{text-align:left;fo
 .prayline{display:flex;gap:6px;align-items:flex-start;font-size:.88rem;color:var(--muted);background:var(--surface-2);border-radius:10px;padding:8px 10px}
 .prayline b{color:var(--fg);font-variant-numeric:tabular-nums}
 .praysheet>*{flex-shrink:0}
+
+/* ===== Mise à jour 9 : sondages, « vu par », mentions ===== */
+.hint{font-size:.82rem;color:var(--muted)}
+/* Coches sous mes messages : ✓ envoyé, ✓✓ vu par certains, ✓✓ bleues vu par tout le monde */
+.ticks{border:0;background:none;padding:0 0 0 4px;margin:0;font:inherit;font-size:.72rem;font-weight:800;letter-spacing:-.18em;color:inherit;opacity:.85;line-height:1;cursor:pointer;touch-action:manipulation}
+.ticks.all{color:#8fd3ff;opacity:1}
+.msg:not(.mine) .ticks.all,.seensheet .ticks.all{color:var(--c-blue)}
+.seensheet h3 .ticks{cursor:default;padding:0 6px 0 0;font-size:.9rem}
+/* Mentions */
+.tag{font-weight:800;color:var(--green-ink);background:var(--green-soft);border-radius:5px;padding:0 3px}
+.tag.me{color:var(--fg);background:color-mix(in srgb,var(--gold) 35%,transparent)}
+.msg.mine .tag{color:inherit;background:rgba(255,255,255,.22)}
+.msg.tagme .bubble{box-shadow:inset 3px 0 0 var(--gold)}
+.mentions{display:flex;flex-direction:column;max-height:min(40vh,264px);overflow-y:auto;border-top:1px solid var(--line);background:var(--surface);padding:4px}
+.mentions+.compose{border-top:0}
+.mentions button{display:flex;align-items:center;gap:10px;border:0;background:none;padding:7px 10px;border-radius:10px;text-align:left;font:inherit;color:var(--fg)}
+.mentions button[aria-selected="true"],.mentions button:hover{background:var(--surface-2)}
+.mentions .av,.seenlist .av{width:28px;height:28px;margin:0;font-size:.78rem;flex:none}
+.mentions small{margin-left:auto;color:var(--muted);font-size:.75rem}
+.pollbtn svg{width:22px;height:22px;color:var(--muted)}
+/* Sondage dans la bulle */
+.bubble.ispoll{min-width:min(280px,70vw)}
+.poll{display:flex;flex-direction:column;gap:6px;padding:2px 0 4px}
+.pq{font-size:1rem;line-height:1.3;overflow-wrap:anywhere}
+.pmode{display:inline-flex;align-items:center;gap:4px;font-size:.74rem;opacity:.75;margin-bottom:2px}
+.popt{display:grid;grid-template-columns:22px minmax(0,1fr) auto;grid-template-rows:auto 6px;column-gap:8px;row-gap:5px;align-items:center;border:0;background:none;padding:6px 2px;text-align:left;font:inherit;color:inherit;border-radius:8px;touch-action:manipulation}
+.popt:hover{background:color-mix(in srgb,currentColor 7%,transparent)}
+.pbox{width:20px;height:20px;border-radius:50%;border:2px solid currentColor;opacity:.6;display:grid;place-items:center}
+.pbox.sq{border-radius:5px}
+.popt.on .pbox{opacity:1;background:currentColor}
+.popt.on .pbox::after{content:"";width:6px;height:10px;border:solid var(--surface);border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg)}
+.msg.mine .popt.on .pbox::after{border-color:var(--green)}
+.ptxt{overflow-wrap:anywhere;line-height:1.3}
+.pn{font-size:.8rem;font-weight:800;font-variant-numeric:tabular-nums;opacity:.8}
+.pbar{grid-column:2 / 4;height:6px;border-radius:99px;background:color-mix(in srgb,currentColor 15%,transparent);overflow:hidden}
+.pbar i{display:block;height:100%;border-radius:inherit;background:var(--green);transition:width .25s ease}
+.msg.mine .pbar i{background:var(--on-green)}
+.pollmore{border:0;border-top:1px solid color-mix(in srgb,currentColor 18%,transparent);background:none;color:inherit;font:inherit;font-weight:800;font-size:.85rem;padding:8px 0 2px;margin-top:2px}
+/* Fenêtres « Infos du message », votes et création du sondage */
+.seensheet h3{display:flex;align-items:center;font-size:.95rem;margin-top:4px}
+.seenq{background:var(--surface-2);border-radius:10px;padding:8px 12px;font-size:.9rem;overflow-wrap:anywhere;white-space:pre-wrap;max-height:120px;overflow:auto}
+.seenlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.seenlist li{display:flex;align-items:center;gap:10px;padding:6px 4px;font-weight:700}
+.vtopt{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:10px}
+.ploptions{display:flex;flex-direction:column;gap:6px}
+.ploptions input{padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:400;font-size:.95rem;color:var(--fg)}
+/* Sur mes messages, le bouton d'actions passe à gauche de la bulle pour laisser les coches accessibles */
+.msg.mine .mmore{right:auto;left:-30px;top:50%;margin-top:-12px;background:var(--surface-2)}
