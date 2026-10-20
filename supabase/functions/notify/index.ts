@@ -1,6 +1,7 @@
 // Fonction Supabase « notify » : envoie une notification sur les téléphones des chefs et cheftaines
 // - quand un message est publié dans un canal qu'ils suivent (choix fait dans le site avec le bouton cloche ;
-//   par défaut : les annonces seulement) ;
+//   par défaut : les annonces seulement), ou quand on les mentionne (@Prénom) ;
+//   les canaux des pôles ne sont envoyés qu'aux chefs qui y ont accès ;
 // - 10 minutes avant Fajr, Dhuhr et Maghrib pour ceux qui ont coché « Heures de prière »
 //   (appel automatique toutes les 5 minutes par la tâche programmée de la mise à jour SQL 08).
 //
@@ -65,6 +66,15 @@ async function sendAll(admin: Db, subs: Sub[], payload: string, ttl = 86400) {
   if (expired.length) await admin.from('push_subscriptions').delete().in('endpoint', expired);
   return sent;
 }
+// Canaux des pôles : seulement les chefs du pôle, les administrateurs et ceux à qui l'accès a été ouvert
+// (même règle que public.can_see_channel, mise à jour SQL 09)
+const POLE_CHANNELS = ['peda', 'formation', 'event', 'support'];
+type Member = { id: string; is_admin: boolean; pole_id: string | null; chat_channels: string[] | null };
+async function allowedMembers(admin: Db, channel: string): Promise<Set<string>> {
+  const { data } = await admin.from('members').select('id, is_admin, pole_id, chat_channels');
+  return new Set((data || []).filter((m: Member) => !POLE_CHANNELS.includes(channel) || m.is_admin || m.pole_id === channel
+    || (m.chat_channels || []).includes(channel)).map((m: Member) => m.id));
+}
 // Appareils des chefs qui suivent ce canal (sans choix enregistré : les annonces)
 async function followers(admin: Db, channel: string, exceptMember?: string): Promise<Sub[]> {
   let q = admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id');
@@ -72,7 +82,8 @@ async function followers(admin: Db, channel: string, exceptMember?: string): Pro
   const { data: all } = await q;
   const { data: prefs } = await admin.from('notif_prefs').select('member_id, channels');
   const follows = new Map((prefs || []).map((p: { member_id: string; channels: string[] }) => [p.member_id, p.channels]));
-  return (all || []).filter((s: Sub) => (follows.get(s.member_id) ?? ['annonces']).includes(channel));
+  const allowed = await allowedMembers(admin, channel);
+  return (all || []).filter((s: Sub) => allowed.has(s.member_id) && (follows.get(s.member_id) ?? ['annonces']).includes(channel));
 }
 
 /* ---------- Heures de prière : même calcul que js/prieres.js (méthode Jafari) ---------- */
@@ -181,21 +192,40 @@ Deno.serve(async (req) => {
     if (body.action === 'key') return json({ publicKey: keys.publicKey });
 
     if (body.action === 'notify') {
-      const { data: msg } = await admin.from('messages').select('id, channel, member_id, body').eq('id', body.message_id).maybeSingle();
+      const { data: msg } = await admin.from('messages').select('*').eq('id', body.message_id).maybeSingle();
       if (!msg || msg.member_id !== me.id) return json({ error: 'message introuvable' }, 400);
 
       webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
-      const subs = await followers(admin, msg.channel, me.id);
       const isAnnonce = msg.channel === 'annonces';
+      const url = SITE_URL + (isAnnonce ? '#annonces' : '#chat-' + msg.channel);
+      const text = msg.poll_options ? `📊 Sondage : ${msg.body}` : msg.body;
+      const short = text.length > 180 ? text.slice(0, 177) + '…' : text;
+
+      // Chefs mentionnés (@Prénom) : prévenus même s'ils ne suivent pas ce canal, s'ils y ont accès
+      const allowed = await allowedMembers(admin, msg.channel);
+      const tagged = new Set<string>((msg.mentions || []).filter((id: string) => id !== me.id && allowed.has(id)));
+      let tagSubs: Sub[] = [];
+      if (tagged.size) {
+        const { data } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').in('member_id', [...tagged]);
+        tagSubs = data || [];
+      }
+      const subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
       const sent = await sendAll(admin, subs, JSON.stringify({
         title: isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
-        body: msg.body.length > 180 ? msg.body.slice(0, 177) + '…' : msg.body,
-        url: SITE_URL + (isAnnonce ? '#annonces' : '#chat-' + msg.channel),
+        body: short,
+        url,
         // Une notification par annonce ; pour les autres canaux, la dernière remplace la précédente
         tag: isAnnonce ? 'annonce-' + msg.id : 'chat-' + msg.channel,
         renotify: !isAnnonce
       }));
-      return json({ sent, total: subs.length });
+      const sentTags = tagSubs.length ? await sendAll(admin, tagSubs, JSON.stringify({
+        title: `@ ${me.title} ${me.first_name} vous a mentionné·e · ${CHANNEL_NAMES[msg.channel] || msg.channel}`,
+        body: short,
+        url,
+        tag: 'mention-' + msg.id,
+        renotify: true
+      })) : 0;
+      return json({ sent: sent + sentTags, total: subs.length + tagSubs.length });
     }
 
     return json({ error: 'action inconnue' }, 400);

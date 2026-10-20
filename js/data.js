@@ -55,13 +55,14 @@ export const CATS = [
   { id: 'photo', name: 'Photos', k: 'var(--c-pink)' }
 ];
 
+// Canaux des pôles (pole: true) : réservés aux chefs du pôle, sauf accès ouvert par un administrateur
 export const CHANNELS = [
   { id: 'annonces', name: 'Annonces', h: "Toute l'unité", announce: true },
   { id: 'general', name: 'Général', h: "Toute l'unité" },
-  { id: 'peda', name: 'Pédagogie', h: 'Pôles' },
-  { id: 'formation', name: 'Formation & Relève', h: 'Pôles' },
-  { id: 'event', name: 'Événementiel', h: 'Pôles' },
-  { id: 'support', name: 'Logistique & trésorerie', h: 'Pôles' }
+  { id: 'peda', pole: true, name: 'Pédagogie', h: 'Pôles' },
+  { id: 'formation', pole: true, name: 'Formation & Relève', h: 'Pôles' },
+  { id: 'event', pole: true, name: 'Événementiel', h: 'Pôles' },
+  { id: 'support', pole: true, name: 'Logistique & trésorerie', h: 'Pôles' }
 ];
 
 export const VALUES = ['Bienveillance', 'Amour', 'Écoute', 'Service', 'Entraide', 'Spiritualité', 'Responsabilité', 'Confiance en soi'];
