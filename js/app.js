@@ -1832,6 +1832,7 @@ function render() {
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
   root.innerHTML = `<div class="app"><aside class="side">
+    <p class="slogan">Le bonheur de l'imam est la plus belle des récompenses</p>
     <div class="topline"><div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>${bellHtml()}</div>
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
     <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button></div>
