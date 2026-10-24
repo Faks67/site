@@ -234,7 +234,6 @@ on conflict (id) do nothing;
 
 insert into public.groups (id, name, color, sort) values
   ('khaadimates', 'Khaadimates', '#4aa63c', 1),
-  ('nour', 'Nour-Khaadimates', '#c93fa0', 2),
   ('sajjidines', 'Sajjidines', '#7b3fc4', 3),
   ('shamssedines', 'Shamssedines', '#d9a400', 4),
   ('noujoums', 'Noujoums', '#1b9fc2', 5),
@@ -247,9 +246,9 @@ select v.first_name, v.title, v.group_id, v.role
 from (values
   ('Nawelle', 'Tata', 'khaadimates', 'principale'),
   ('Khadidja', 'Cheftaine', 'khaadimates', 'doyenne'),
-  ('Zahira', 'Cheftaine', 'nour', 'doyenne'),
-  ('Sara', 'Cheftaine', 'nour', 'chef'),
-  ('Assia', 'Cheftaine', 'nour', 'chef'),
+  ('Zahira', 'Cheftaine', null, 'doyenne'),
+  ('Sara', 'Cheftaine', null, 'chef'),
+  ('Assia', 'Cheftaine', null, 'chef'),
   ('Mylène', 'Cheftaine', 'sajjidines', 'chef'),
   ('Mina', 'Cheftaine', 'sajjidines', 'chef'),
   ('Soukeyna', 'Cheftaine', 'sajjidines', 'chef'),

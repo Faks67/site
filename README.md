@@ -74,6 +74,11 @@ Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/priere
    - **Vu par** : sous mes messages, ✓ = envoyé, ✓✓ = vu par certains, ✓✓ bleues = vu par tout le monde. Toucher les coches (ou appui long > *Infos*) pour voir qui l'a vu.
    - **Mentionner un chef** : taper `@` puis le début du prénom et choisir dans la liste. Le chef mentionné reçoit une notification même s'il ne suit pas ce canal.
 
+## Mise à jour 10 : retrait du groupe Nour-Khaadimates
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/10-retrait-nour-khaadimates.sql` et cliquer sur *Run*.
+2. Les cheftaines de ce groupe restent dans l'application sans groupe : les rattacher à un autre groupe depuis *Administration > Chefs et cheftaines* si besoin.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
