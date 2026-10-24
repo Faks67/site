@@ -210,6 +210,9 @@ table.admin input[type=checkbox]{width:auto}
 .progress{font-size:.85rem;color:var(--green-ink);font-weight:700}
 .side .logout{background:none;border:0;color:var(--muted);font-size:.8rem;text-decoration:underline;padding:0;margin-top:6px}
 .who b{display:block;color:var(--fg)}
+.themepick{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:var(--muted);font-size:.85rem}
+.themepick .seg button{padding:5px 10px;font-size:.8rem}
+@media (max-width:860px){.moresheet .themepick{border-top:1px solid var(--line);margin-top:6px;padding:10px 12px 0;font-size:.88rem}}
 .msg .del{background:none;border:0;color:var(--muted);font-size:.75rem;padding:0 0 0 6px}
 @media (max-width:860px){.side .who{display:none}}
 img{max-width:100%}

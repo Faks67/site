@@ -11,6 +11,15 @@
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1a221b" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>
+// Thème choisi sur cet appareil (clair, sombre ou automatique), appliqué avant l'affichage pour éviter un flash
+(function () {
+  var t = null; try { t = JSON.parse(localStorage.getItem('theme')); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') return;
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.content = t === 'dark' ? '#1a221b' : '#ffffff'; });
+})();
+</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Scouts TDI">
 <link rel="preconnect" href="https://fonts.googleapis.com">

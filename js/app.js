@@ -385,6 +385,7 @@ function tabbarHtml() {
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
   ${S.moreOpen ? `<div class="sheetwrap" data-closemore><div class="card moresheet" role="dialog" aria-label="Plus de pages"><div class="grab"></div>
     ${more.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
+    ${themeHtml()}
     <div class="whoami"><span>Connecté·e : <b>${esc(display(S.me))}</b></span><button class="btn small" data-logout>${ico('out')} Se déconnecter</button></div></div></div>` : ''}`;
 }
 // Pastille rouge du nombre de messages non lus (« total » ou un canal)
@@ -466,6 +467,18 @@ function nextDay() {
 /* ---------- Heures de prière (calculées dans le téléphone, méthode Jafari) ---------- */
 const DEFAULT_PLACE = { name: 'Paris', lat: 48.8566, lng: 2.3522 };
 const store = { get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+/* ---------- Thème clair / sombre (gardé sur cet appareil) ---------- */
+const THEMES = [['auto', 'Auto'], ['light', 'Clair'], ['dark', 'Sombre']];
+const themePref = () => (['light', 'dark'].includes(store.get('theme')) ? store.get('theme') : 'auto');
+function setTheme(t) {
+  store.set('theme', t);
+  const el = document.documentElement;
+  if (t === 'auto') delete el.dataset.theme; else el.dataset.theme = t;
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    m.content = t === 'auto' ? (m.media.includes('dark') ? '#1a221b' : '#ffffff') : t === 'dark' ? '#1a221b' : '#ffffff';
+  });
+}
+const themeHtml = () => `<div class="themepick"><span>Thème</span><div class="seg" role="group" aria-label="Thème de l'application">${THEMES.map(([k, l]) => `<button type="button" data-settheme="${k}" aria-pressed="${themePref() === k}">${l}</button>`).join('')}</div></div>`;
 const unitPlace = () => S.prayerPlace || DEFAULT_PLACE;
 // Lieu affiché : celui de l'unité, ou la position du téléphone (gardée sur cet appareil seulement)
 const prayPlace = () => (store.get('prayUseMe') && store.get('prayMyPos')) || unitPlace();
@@ -1832,10 +1845,10 @@ function render() {
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
   root.innerHTML = `<div class="app"><aside class="side">
-    <p class="slogan">Le bonheur de l'imam est la plus belle des récompenses</p>
+    <p class="slogan">Le bonheur de l'Imam est la plus belle des récompenses</p>
     <div class="topline"><div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>${bellHtml()}</div>
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
-    <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button></div>
+    <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button>${themeHtml()}</div>
   </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${sheet}</div>`;
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
   if (S.view === 'localisation') initMap(); else if (mapInst) { mapInst.remove(); mapInst = null; mapMarkers = []; }
@@ -1887,6 +1900,8 @@ root.addEventListener('click', async (e) => {
   const t = e.target;
   const a = t.closest('[data-auth]'); if (a) { authMode = a.dataset.auth; authErr = authMsg = ''; render(); return; }
   if (t.closest('[data-logout]')) { await sb.auth.signOut(); return; }
+  const th = t.closest('[data-settheme]');
+  if (th) { setTheme(th.dataset.settheme); document.querySelectorAll('[data-settheme]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.settheme === th.dataset.settheme)); return; }
   const nv = t.closest('button[data-v]'); if (nv) return go(nv.dataset.v);
   if (t.closest('[data-more]')) { S.moreOpen = !S.moreOpen; return render(); }
   if (t.closest('[data-vitrineclear]')) return clearVitrine();
