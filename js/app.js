@@ -1188,7 +1188,8 @@ function msgsHtml() {
   if (!list) return '<p class="chatempty">Chargement…</p>';
   if (!list.length) return `<p class="chatempty">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`;
   let prev = null;
-  return list.map((m) => {
+  // Un bloc par jour : la date reste collée en haut seulement pendant que ses messages défilent, puis la suivante la pousse
+  return list.map((m, i) => {
     const a = member(m.member_id), mine = m.member_id === S.me.id, k = grp(a?.group_id)?.color || 'var(--muted)';
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
@@ -1197,11 +1198,11 @@ function msgsHtml() {
     const body = gif
       ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
       : poll ? pollHtml(m) : `<p>${bodyHtml(m)}</p>`;
-    return `${newDay ? `<div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
+    return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
       <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
       ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
-  }).join('');
+  }).join('') + '</section>';
 }
 // Redessine seulement la liste des messages : la zone d'écriture garde le focus et le clavier reste ouvert
 function patchChat(toBottom) {

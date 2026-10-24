@@ -564,6 +564,7 @@ html.chatmode main{display:flex;flex-direction:column;min-height:0;overflow:hidd
 .chat{display:flex;flex-direction:column;flex:1;min-height:0;height:auto;padding:0;overflow:hidden}
 .chat .msgs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 12px;gap:2px;background:var(--bg);-webkit-overflow-scrolling:touch}
 .chatempty{color:var(--muted);text-align:center;margin:auto}
+.chat .day{display:flex;flex-direction:column;gap:2px}
 .daysep{display:flex;justify-content:center;margin:12px 0 6px;position:sticky;top:0;z-index:1}
 .daysep span{background:var(--surface);border:1px solid var(--line);color:var(--muted);font-size:.72rem;font-weight:700;padding:3px 10px;border-radius:99px;box-shadow:var(--shadow)}
 .msg{display:flex;gap:8px;align-items:flex-end;max-width:none;margin-top:10px}
