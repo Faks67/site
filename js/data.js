@@ -34,6 +34,18 @@ export const POLE_CONTENT = {
       ['Projets possibles', ["Fête d'unité, iftar de l'unité", 'Journée familles', 'Veillées spirituelles adaptées aux âges', 'Action solidaire', 'Sortie réunissant les groupes', 'Camp', 'Activités parents / enfants', "Le restaurant de l'Imam (ajf)", 'Concours de Coran', 'Ziyarat, séjours ou gîtes', 'Les Scouts pâtissiers', 'Parc Astérix']]
     ]
   },
+  voyage: {
+    tag: 'Faire découvrir le monde', lead: 'Responsable voyages',
+    mission: "Organiser les voyages des scouts : voyages humanitaires, séjours en gîte, ziyarat et sorties de plusieurs jours, pour vivre ensemble le service, la découverte et la fraternité.",
+    missions: ['Proposer et préparer les voyages de l\'année', 'Trouver les hébergements (gîtes, centres, auberges)', 'Monter les voyages humanitaires avec des associations partenaires', 'Établir le budget avec la trésorerie et chercher des financements', 'Gérer les autorisations parentales et les documents de voyage', 'Préparer la sécurité, les transports et l\'encadrement'],
+    objectif: "Organiser 1 à 2 voyages ou séjours par an, dont un projet humanitaire, en impliquant les jeunes dans la préparation.",
+    compo: ['1 doyenne responsable', '2 cheffes responsables de séjours', '1 ou 2 stagiaires', '1 ou 2 grandes motivées'], total: '5 à 7 personnes',
+    blocks: [
+      ['Types de voyages', ['Voyage humanitaire', 'Séjour en gîte', 'Ziyarat', 'Camp et week-end nature', 'Sortie culturelle de plusieurs jours']],
+      ['Préparation', ['Choix de la destination et des dates', 'Réservation hébergement et transport', 'Budget et participation des familles', 'Autorisations parentales, fiches sanitaires, assurances', 'Programme des activités et des temps spirituels']],
+      ['Sur place et au retour', ["Répartition de l'encadrement", 'Gestion des imprévus', 'Bilan avec les chefs', 'Souvenirs à partager avec les familles']]
+    ]
+  },
   support: {
     tag: 'Indispensables au bon fonctionnement', lead: 'Responsables à désigner',
     mission: 'Les fonctions qui permettent aux groupes et aux pôles de fonctionner : budget, matériel, calendrier et communication.',
@@ -62,6 +74,7 @@ export const CHANNELS = [
   { id: 'peda', pole: true, name: 'Pédagogie', h: 'Pôles' },
   { id: 'formation', pole: true, name: 'Formation & Relève', h: 'Pôles' },
   { id: 'event', pole: true, name: 'Événementiel', h: 'Pôles' },
+  { id: 'voyage', pole: true, name: 'Voyages', h: 'Pôles' },
   { id: 'support', pole: true, name: 'Logistique & trésorerie', h: 'Pôles' }
 ];
 
