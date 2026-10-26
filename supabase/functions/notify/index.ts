@@ -22,7 +22,7 @@ const cors = {
 };
 const CHANNEL_NAMES: Record<string, string> = {
   annonces: 'Annonces', general: 'Général', peda: 'Pédagogie',
-  formation: 'Formation & Relève', event: 'Événementiel', support: 'Logistique & trésorerie'
+  formation: 'Formation & Relève', event: 'Événementiel', voyage: 'Voyages', support: 'Logistique & trésorerie'
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -67,12 +67,15 @@ async function sendAll(admin: Db, subs: Sub[], payload: string, ttl = 86400) {
   return sent;
 }
 // Canaux des pôles : seulement les chefs du pôle, les administrateurs et ceux à qui l'accès a été ouvert
-// (même règle que public.can_see_channel, mises à jour SQL 09 et 12)
-const POLE_CHANNELS = ['peda', 'formation', 'event', 'support'];
+// (même règle que public.can_see_channel, mises à jour SQL 09 et 12). Les canaux des pôles sont lus dans la table
+// des pôles : un nouveau pôle n'oblige pas à redéployer la fonction.
+const OPEN_CHANNELS = ['annonces', 'general', 'prieres'];
 type Member = { id: string; is_admin: boolean; pole_id: string | null; pole_ids: string[] | null; chat_channels: string[] | null };
 async function allowedMembers(admin: Db, channel: string): Promise<Set<string>> {
   const { data } = await admin.from('members').select('id, is_admin, pole_id, pole_ids, chat_channels');
-  return new Set((data || []).filter((m: Member) => !POLE_CHANNELS.includes(channel) || m.is_admin || m.pole_id === channel
+  const { data: poles } = await admin.from('poles').select('id');
+  const isPole = !OPEN_CHANNELS.includes(channel) && (poles || []).some((p: { id: string }) => p.id === channel);
+  return new Set((data || []).filter((m: Member) => !isPole || m.is_admin || m.pole_id === channel
     || (m.pole_ids || []).includes(channel)
     || (m.chat_channels || []).includes(channel)).map((m: Member) => m.id));
 }

@@ -96,6 +96,12 @@ Le site est passé de `https://faks67.github.io/site/` à **https://scoutbaytulm
 3. **Pôles de chaque chef** : dans *Administration > Chefs et cheftaines*, toucher les pôles d'un chef pour les cocher ou décocher, puis *Enregistrer*. Il voit la discussion de chacun de ses pôles et apparaît dans chacun dans l'organigramme.
 4. **Réunion de pôle** : dans le calendrier, en ajoutant un événement, cocher le ou les *Pôles concernés*. Seuls les membres de ces pôles sont attendus (présences, accueil). Sans pôle coché, rien ne change : tous les chefs sont concernés.
 
+## Mise à jour 13 : pôle Voyages
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/13-pole-voyages.sql` et cliquer sur *Run*. Le pôle apparaît dans l'organigramme, la page Pôles, l'administration, le calendrier et a son canal de discussion « Voyages ».
+2. **Fonction d'envoi des notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Les messages du canal Voyages ne sont envoyés qu'aux membres du pôle. La fonction lit désormais la liste des pôles dans la base : un futur pôle ne demandera plus de la redéployer.
+3. **Membres** : dans *Administration > Chefs et cheftaines*, cocher *Voyages* pour les chefs du pôle, puis *Enregistrer*.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

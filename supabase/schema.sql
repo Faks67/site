@@ -229,7 +229,8 @@ insert into public.poles (id, name, short_name, color, sort) values
   ('peda', 'Pôle Pédagogique', 'Pédagogique', '#2f5fd0', 1),
   ('formation', 'Pôle Formation & Relève', 'Formation & Relève', '#7b3fc4', 2),
   ('event', 'Pôle Événementiel & Vie d''Unité', 'Événementiel', '#d9423a', 3),
-  ('support', 'Fonctions support', 'Support', '#c99400', 4)
+  ('voyage', 'Pôle Voyages', 'Voyages', '#1b9fc2', 4),
+  ('support', 'Fonctions support', 'Support', '#c99400', 5)
 on conflict (id) do nothing;
 
 insert into public.groups (id, name, color, sort) values
