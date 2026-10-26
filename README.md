@@ -16,7 +16,7 @@ Site privé des chefs et cheftaines scouts de Bayt ul Mahdi : organigramme, pôl
    select lower('votre.adresse@exemple.fr'), id from public.members where first_name = 'Fakhar';
    ```
 3. **Connexion par mot de passe** : *Authentication > Sign In / Providers > Email*, désactiver *Confirm email*.
-4. **Adresse du site** : *Authentication > URL Configuration*, mettre `https://faks67.github.io/site/` dans *Site URL*.
+4. **Adresse du site** : *Authentication > URL Configuration*, mettre `https://scoutbaytulmahdi.github.io/` dans *Site URL* et dans *Redirect URLs*.
 5. **Mise en ligne** : sur GitHub, *Settings > Pages*, *Source : Deploy from a branch*, branche `main`, dossier `/ (root)`.
 
 ## Mise à jour 2 : réactions et annonces avec notifications
@@ -79,6 +79,16 @@ Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/priere
 1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/10-retrait-nour-khaadimates.sql` et cliquer sur *Run*.
 2. Les cheftaines de ce groupe restent dans l'application sans groupe : les rattacher à un autre groupe depuis *Administration > Chefs et cheftaines* si besoin.
 
+## Mise à jour 11 : nouvelle adresse du site
+
+Le site est passé de `https://faks67.github.io/site/` à **https://scoutbaytulmahdi.github.io/** (organisation GitHub `scoutbaytulmahdi`, dépôt `scoutbaytulmahdi.github.io`).
+
+1. **GitHub** : dans le dépôt `scoutbaytulmahdi/scoutbaytulmahdi.github.io`, *Settings > Pages*, *Deploy from a branch*, branche `main`, dossier `/ (root)`.
+2. **Supabase, adresse du site** : *Authentication > URL Configuration*, remplacer l'ancienne adresse par `https://scoutbaytulmahdi.github.io/` dans *Site URL* et dans *Redirect URLs*.
+3. **Supabase, notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*.
+4. **Redirection de l'ancienne adresse** : sur le compte personnel `Faks67`, créer un nouveau dépôt public nommé `site`, y déposer le fichier `redirection/index.html` de ce dépôt (sous le nom `index.html`), puis activer *Settings > Pages* (branche `main`, dossier `/ (root)`). L'ancienne adresse renvoie alors vers la nouvelle.
+5. **Chaque chef** : ouvrir la nouvelle adresse, remettre l'appli sur l'écran d'accueil (et supprimer l'ancienne icône), se reconnecter et réactiver les notifications avec la cloche.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -96,6 +106,7 @@ Les horaires (méthode Jafari) sont calculés dans le téléphone par `js/priere
 | `supabase/09-sondages-vu-mentions.sql` | Canaux des pôles réservés, sondages, « vu par » et mentions |
 | `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
 | `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
+| `redirection/index.html` | Page à mettre sur l'ancienne adresse (`Faks67/site`) pour renvoyer vers la nouvelle |
 | `.github/workflows/keepalive.yml` | Appel automatique tous les 3 jours pour éviter la mise en veille de Supabase |
 
 ## Sécurité
