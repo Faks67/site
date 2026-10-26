@@ -19,7 +19,7 @@ const READ_SECONDS = 3600;
 const KEEP_DAYS = 30;
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-files-action, x-file-name',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 const json = (body: unknown, status = 200) =>
@@ -71,11 +71,14 @@ Deno.serve(async (req) => {
 
     const s3 = b2();
     if (!s3) return json({ error: 'b2_absent' }, 503);
+    // L'action et le nom du fichier arrivent dans les en-têtes (l'adresse peut perdre ses paramètres en chemin)
     const q = new URL(req.url).searchParams;
+    const action = req.headers.get('x-files-action') || q.get('action');
+    const fileName = (() => { try { return decodeURIComponent(req.headers.get('x-file-name') || ''); } catch { return ''; } })() || q.get('name');
 
     // Envoi : le corps de la requête est le fichier lui-même
-    if (q.get('action') === 'upload') {
-      const safe = (q.get('name') || 'fichier').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'fichier';
+    if (action === 'upload') {
+      const safe = (fileName || 'fichier').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'fichier';
       const body = new Uint8Array(await req.arrayBuffer());
       if (!body.length) return json({ error: 'fichier vide' }, 400);
       if (body.length > MAX_BYTES) return json({ error: 'fichier trop lourd (25 Mo maximum)' }, 413);
