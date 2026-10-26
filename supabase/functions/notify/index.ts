@@ -12,7 +12,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 import webpush from 'npm:web-push@3.6.7';
 
-const SITE_URL = 'https://faks67.github.io/site/';
+const SITE_URL = 'https://scoutbaytulmahdi.github.io/';
 const TIME_ZONE = 'Europe/Paris';
 const PRAYER_LEAD_MIN = 10;
 const cors = {
