@@ -41,7 +41,8 @@ const ICONS = {
   down: '<path d="M6 9l6 6 6-6"/>',
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
-  poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>'
+  poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  clip: '<path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l8-8"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -1072,6 +1073,66 @@ const GIF_RE = /^https:\/\/(media[0-9]*|i)\.giphy\.com\/[A-Za-z0-9/._-]+$/;
 const findMsg = (id) => Object.values(S.msgs).flat().find((x) => x.id === id);
 const msgPreview = (o) => (o.gif_url ? '🎞️ GIF' : o.poll_options ? '📊 ' + o.body : o.body);
 
+/* ---------- Pièces jointes de la discussion (Backblaze B2, effacées au bout de 30 jours) ---------- */
+const ATT_DAYS = 30, ATT_MAX = 25 * 1048576;
+const attKind = (m) => (/^image\//.test(m.attach_type || '') ? 'img' : /^video\//.test(m.attach_type || '') ? 'vid' : 'file');
+const attOnly = (m) => m.body === '📎 ' + m.attach_name; // pas de légende : le texte n'est pas affiché
+const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(n / 1024)) + ' Ko');
+function attHtml(m) {
+  const left = Math.max(0, ATT_DAYS - Math.floor((Date.now() - new Date(m.created_at)) / 86400000));
+  if (!m.attach_path) return `<div class="attfile expired"><span class="ficon">⌛</span><span><b>${esc(m.attach_name)}</b><small>Fichier expiré (gardé ${ATT_DAYS} jours)</small></span></div>`;
+  const url = attUrl(m.attach_path), src = url ? `src="${esc(url)}"` : '';
+  const k = attKind(m), ratio = m.attach_w && m.attach_h ? `style="aspect-ratio:${m.attach_w} / ${m.attach_h}"` : '';
+  if (k === 'img') return `<button type="button" class="attimg" data-attopen="${esc(m.attach_path)}" aria-label="Ouvrir la photo ${esc(m.attach_name)}"><img ${src} data-attsrc="${esc(m.attach_path)}" alt="" draggable="false" ${ratio}></button>`;
+  if (k === 'vid') return `<video class="attvid" controls playsinline preload="metadata" ${src} data-attsrc="${esc(m.attach_path)}" ${ratio}></video>`;
+  const ext = (m.attach_name.split('.').pop() || 'FICHIER').toUpperCase().slice(0, 4);
+  return `<button type="button" class="attfile" data-attopen="${esc(m.attach_path)}"><span class="ficon">${esc(ext)}</span><span><b>${esc(m.attach_name)}</b><small>${m.attach_size ? fmtSize(m.attach_size) + ' · ' : ''}encore ${left} jour${left > 1 ? 's' : ''}</small></span></button>`;
+}
+// Liens temporaires (1 h) : gardés 50 minutes, demandés par lots après l'affichage
+S.attLinks = {};
+const attUrl = (path) => { const l = S.attLinks[path]; return l && Date.now() - l.at < 50 * 60000 ? l.url : null; };
+let attFilling = false;
+async function fillAttLinks() {
+  if (attFilling) return;
+  const els = [...document.querySelectorAll('#msgs [data-attsrc]')].filter((el) => !el.getAttribute('src'));
+  const need = [...new Set(els.map((el) => el.dataset.attsrc))].filter((p) => !attUrl(p));
+  attFilling = true;
+  try {
+    if (need.length) { const urls = await b2Links(need); for (const p in urls) S.attLinks[p] = { url: urls[p], at: Date.now() }; }
+  } catch (e) { /* aperçus facultatifs */ } finally { attFilling = false; }
+  const box = $('#msgs'), near = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  document.querySelectorAll('#msgs [data-attsrc]').forEach((el) => { const u = attUrl(el.dataset.attsrc); if (u && !el.getAttribute('src')) el.setAttribute('src', u); });
+  if (box && near) box.scrollTop = box.scrollHeight;
+}
+async function openAtt(path) {
+  const w = window.open('', '_blank');
+  try {
+    let url = attUrl(path);
+    if (!url) { url = (await b2Links([path]))[path]; if (url) S.attLinks[path] = { url, at: Date.now() }; }
+    if (!url) throw new Error('fichier introuvable ou expiré');
+    if (w) w.location = url; else location.href = url;
+  } catch (e) { w?.close(); fail(e); }
+}
+async function sendAttachment(f0) {
+  if (S.attBusy) return;
+  let f = await compressImage(f0);
+  if (f.size > ATT_MAX) return toast(/^video\//.test(f.type) ? 'Vidéo trop lourde (25 Mo maximum) : mettez-la sur YouTube en « non répertoriée » et collez le lien.' : 'Fichier trop lourd (25 Mo maximum).');
+  const i = $('#msgIn'), caption = i?.value.trim() || '';
+  S.attBusy = true; paintAttBtn(); toast(`Envoi de ${f0.name}…`);
+  try {
+    let w = null, h = null;
+    if (/^image\//.test(f.type)) { try { const b = await createImageBitmap(f); w = b.width; h = b.height; } catch (e) { /* dimensions facultatives */ } }
+    const safe = f.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'fichier';
+    const up = await filesFn(`?action=upload&name=${encodeURIComponent(safe)}`, f, f.type || 'application/octet-stream');
+    const name = f0.name.slice(0, 200);
+    const ok = await sendMessage({ body: caption || '📎 ' + name, attach_path: up.path, attach_name: name, attach_type: f.type || null, attach_size: up.size, attach_w: w, attach_h: h });
+    if (!ok) await removeFile(up.path);
+    else if (caption && i) { i.value = ''; growMsg(); }
+  } catch (e) { fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
+  S.attBusy = false; paintAttBtn();
+}
+const paintAttBtn = () => { const b = $('[data-attach]'); if (b) { b.disabled = !!S.attBusy; b.classList.toggle('busy', !!S.attBusy); } };
+
 /* ---------- Mentions (@chef), comme dans WhatsApp ---------- */
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -1251,13 +1312,14 @@ function msgsHtml() {
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
     prev = m;
-    const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length;
+    const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length, att = !gif && !poll && m.attach_name;
+    const media = att && m.attach_path && attKind(m) !== 'file';
     const body = gif
       ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
-      : poll ? pollHtml(m) : `<p>${bodyHtml(m)}</p>`;
+      : poll ? pollHtml(m) : att ? attHtml(m) + (attOnly(m) ? '' : `<p>${bodyHtml(m)}</p>`) : `<p>${bodyHtml(m)}</p>`;
     return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
-      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
+      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}${att ? ' isatt' : ''}${media && attOnly(m) ? ' ismedia' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
       ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
   }).join('') + '</section>';
 }
@@ -1268,7 +1330,7 @@ function patchChat(toBottom) {
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   box.innerHTML = msgsHtml();
   if (near || toBottom) box.scrollTop = box.scrollHeight;
-  paintBadges();
+  paintBadges(); fillAttLinks();
 }
 function vChat() {
   if (!seesChan(S.me, S.chan)) { S.chan = 'annonces'; if (!S.msgs.annonces) loadMessages('annonces'); }
@@ -1281,7 +1343,7 @@ function vChat() {
     <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
     <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
     <div class="mentions" id="mentions" role="listbox" aria-label="Mentionner un chef" hidden></div>
-    <form class="compose" id="compose"><button type="button" class="cbtn pollbtn" data-pollnew aria-label="Créer un sondage">${ico('poll')}</button><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
+    <form class="compose" id="compose"><button type="button" class="cbtn pollbtn" data-pollnew aria-label="Créer un sondage">${ico('poll')}</button><button type="button" class="cbtn attbtn${S.attBusy ? ' busy' : ''}" data-attach aria-label="Joindre une photo, une vidéo ou un document" ${S.attBusy ? 'disabled' : ''}>${ico('clip')}</button><input type="file" id="attFile" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.txt" hidden><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
   </div></div>`;
 }
 
@@ -1389,7 +1451,7 @@ async function sendMessage(row) {
   const chan = S.chan, reply = S.replyTo;
   const tags = row.gif_url ? [] : findMentions(row.body);
   const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...(tags.length ? { mentions: tags } : {}), ...row }).select().single();
-  if (r.error) { fail(row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
+  if (r.error) { fail(row.attach_path && ['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 15 dans Supabase") : row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
   if (reply && S.replyTo === reply) setReply(null);
   const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
   if (S.chan === chan) patchChat(true);
@@ -1441,8 +1503,10 @@ msgMenu.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-mm]');
     if (!b.dataset.armed) { b.dataset.armed = '1'; b.querySelector('span').textContent = 'Confirmer la suppression'; return; }
     closeMsgMenu();
+    const path = m?.attach_path;
     const r = await sb.from('messages').delete().eq('id', id); if (r.error) return fail(r.error);
     removeMsg(id); patchChat(); toast('Message supprimé');
+    if (path) removeFile(path);
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !msgMenu.hidden) closeMsgMenu(); });
@@ -1913,7 +1977,7 @@ function render() {
     <nav class="nav" aria-label="Menu principal">${navHtml()}</nav>
     <div class="who"><label>Connecté·e</label><b>${esc(display(S.me))}</b><button class="logout" data-logout>Se déconnecter</button>${themeHtml()}</div>
   </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${sheet}</div>`;
-  const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
+  const m = $('#msgs'); if (m) { m.scrollTop = m.scrollHeight; fillAttLinks(); }
   if (S.view === 'localisation') initMap(); else if (mapInst) { mapInst.remove(); mapInst = null; mapMarkers = []; }
   const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
@@ -2038,6 +2102,8 @@ root.addEventListener('click', async (e) => {
   }
   if (t.closest('[data-replycancel]')) return setReply(null);
   // Sondages, « vu par » et mentions
+  if (t.closest('[data-attach]')) { closePicker(); $('#attFile')?.click(); return; }
+  const ao = t.closest('[data-attopen]'); if (ao) return openAtt(ao.dataset.attopen);
   if (t.closest('[data-pollnew]')) { closePicker(); $('#msgIn')?.blur(); S.sheet = 'poll'; render(); $('#plQ')?.focus(); return; }
   const pm = t.closest('[data-pollmulti]'); if (pm) { S.pollDraft.multi = !S.pollDraft.multi; pm.setAttribute('aria-checked', S.pollDraft.multi); return; }
   const vt = t.closest('[data-vote]'); if (vt) return vote(Number(vt.dataset.vote), Number(vt.dataset.opt));
@@ -2059,8 +2125,10 @@ root.addEventListener('click', async (e) => {
     S.docs = S.docs.filter((x) => x.id !== d.id); render(); toast('Document supprimé');
   });
   const dm = t.closest('[data-delmsg]'); if (dm) return confirmThen(dm, 'Confirmer', async () => {
+    const path = findMsg(Number(dm.dataset.delmsg))?.attach_path;
     const r = await sb.from('messages').delete().eq('id', dm.dataset.delmsg); if (r.error) return fail(r.error);
     S.msgs[S.chan] = S.msgs[S.chan].filter((x) => String(x.id) !== dm.dataset.delmsg); patchChat();
+    if (path) removeFile(path);
   });
   const sm = t.closest('[data-savemember]'); if (sm) return saveMember(sm.closest('[data-member]'));
   const rm = t.closest('[data-delmember]'); if (rm) return confirmThen(rm, 'Confirmer le retrait', async () => {
@@ -2124,6 +2192,7 @@ async function saveChatAccess(box) {
 }
 root.addEventListener('change', (e) => {
   if (e.target.id === 'upFile' && e.target.files.length) addFiles(e.target.files);
+  if (e.target.id === 'attFile' && e.target.files[0]) { const f = e.target.files[0]; e.target.value = ''; sendAttachment(f); }
   if (e.target.id === 'upPole') S.upPole = e.target.value;
   if (e.target.id === 'vitrineFile' && e.target.files[0]) setVitrine(e.target.files[0]);
   if (e.target.id === 'efAllDay') document.querySelectorAll('.timef').forEach((x) => (x.hidden = e.target.checked));

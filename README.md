@@ -111,6 +111,14 @@ Les nouveaux documents de la bibliothèque sont rangés sur Backblaze B2 (bucket
 3. **Fonction** : *Edge Functions > Deploy a new function > Via Editor*, nommer la fonction `files`, coller `supabase/functions/files/index.ts` et cliquer sur *Deploy*. Dans ses réglages, désactiver *Verify JWT* (la fonction vérifie elle-même que l'utilisateur est un chef connecté).
 4. **Vérifier** : déposer un petit document dans la Bibliothèque, puis l'ouvrir. Dans *Administration > Espace de stockage*, il est compté dans « Backblaze (nouveaux documents) ».
 
+## Mise à jour 15 : pièces jointes dans la discussion
+
+Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un PDF ou un document. Les fichiers sont rangés sur Backblaze B2 par la fonction `files`, les photos sont compressées avant l'envoi, et tout est **effacé automatiquement au bout de 30 jours** : le message reste avec la mention « Fichier expiré ». Ce qui doit être gardé va dans la Bibliothèque.
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/15-pieces-jointes.sql` et cliquer sur *Run*. Il ajoute les colonnes des pièces jointes et la tâche programmée qui fait le ménage chaque nuit.
+2. **Fonction** : *Edge Functions > files > Code*, remplacer tout le code par le nouveau `supabase/functions/files/index.ts` et cliquer sur *Deploy* (*Verify JWT* reste désactivé).
+3. Une pièce jointe n'est lisible que par les chefs qui voient le canal où elle a été envoyée.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -126,7 +134,7 @@ Les nouveaux documents de la bibliothèque sont rangés sur Backblaze B2 (bucket
 | `supabase/04-adresses-groupes.sql` | Adresse, coordonnées et groupes des événements |
 | `supabase/05-reclamations.sql` | Réclamations, justificatifs et autorisations de remboursement |
 | `supabase/09-sondages-vu-mentions.sql` | Canaux des pôles réservés, sondages, « vu par » et mentions |
-| `supabase/functions/files/index.ts` | Envoi, lecture et suppression des documents sur Backblaze B2 |
+| `supabase/functions/files/index.ts` | Envoi, lecture et suppression des documents et pièces jointes sur Backblaze B2, ménage des pièces jointes de plus de 30 jours |
 | `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
 | `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
 | `redirection/index.html` | Page à mettre sur l'ancienne adresse (`Faks67/site`) pour renvoyer vers la nouvelle |
