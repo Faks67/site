@@ -835,3 +835,24 @@ table.praytable td:first-child,table.praytable th:first-child{text-align:left;fo
   .vitrineadm>div:first-child{width:64px;height:64px}
 }
 .gaugerow+.gaugerow{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+/* Pièces jointes de la discussion */
+.cbtn.attbtn svg{width:21px;height:21px}
+.cbtn.attbtn.busy{opacity:.45;animation:pulse 1s ease-in-out infinite alternate}
+@keyframes pulse{to{opacity:.9}}
+.bubble.isatt{display:flex;flex-direction:column;gap:6px}
+.bubble.isatt>p{margin:0}
+.bubble.ismedia{padding:4px;background:var(--surface);border-color:var(--line)}
+.msg.mine .bubble.ismedia{background:var(--green-soft);border-color:transparent}
+.bubble.ismedia time{position:absolute;right:10px;bottom:9px;margin:0;padding:2px 6px;border-radius:99px;background:rgba(0,0,0,.45);color:#fff;opacity:1;float:none}
+.attimg{display:block;border:0;padding:0;background:none;border-radius:14px;overflow:hidden;cursor:zoom-in;max-width:min(280px,100%)}
+.attimg img{display:block;width:280px;max-width:100%;max-height:360px;object-fit:cover;background:var(--surface-2);aspect-ratio:4 / 3}
+.attvid{display:block;width:280px;max-width:100%;max-height:360px;border-radius:14px;background:#000;aspect-ratio:16 / 9}
+.attfile{display:flex;align-items:center;gap:10px;text-align:left;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:12px;padding:8px 12px 8px 8px;max-width:280px;min-width:0}
+.attfile .ficon{flex:none;width:40px;height:40px;border-radius:9px;background:color-mix(in srgb,var(--c-blue) 14%,var(--surface));color:var(--c-blue);display:grid;place-items:center;font-size:.7rem;font-weight:800}
+.attfile>span:last-child{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.attfile b{font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attfile small{color:var(--muted);font-size:.74rem}
+.attfile.expired{opacity:.7}
+.attfile.expired .ficon{background:var(--surface-2);color:var(--muted);font-size:1.1rem}
+.compose textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:420px){.compose{gap:2px}.compose .cbtn:not(.send){width:36px}}
