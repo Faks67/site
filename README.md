@@ -119,6 +119,12 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
 2. **Fonction** : *Edge Functions > files > Code*, remplacer tout le code par le nouveau `supabase/functions/files/index.ts` et cliquer sur *Deploy* (*Verify JWT* reste désactivé).
 3. Une pièce jointe n'est lisible que par les chefs qui voient le canal où elle a été envoyée.
 
+## Mise à jour 16 : réunions de pôle privées
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/16-reunions-poles-privees.sql` et cliquer sur *Run*.
+2. Une réunion de pôle (événement avec des *Pôles concernés* cochés) n'est plus visible que par les membres de ces pôles, les administrateurs, la personne qui l'a créée et les chefs qui ont l'autorisation **Réunions de pôle** (à cocher dans *Administration*, fiche du chef > *Autorisations*). Les autres chefs ne la reçoivent pas du tout : ni calendrier, ni carte, ni accueil.
+3. L'autorisation **Calendrier** sert seulement à ajouter, modifier et supprimer des événements : elle ne permet plus de voir les réunions des autres pôles.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
