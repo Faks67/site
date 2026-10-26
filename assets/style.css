@@ -198,11 +198,6 @@ select.inline{padding:3px 6px;border-radius:7px;border:1px solid var(--line);bac
 .err{color:var(--c-red);font-weight:700;font-size:.9rem}
 .ok{color:var(--green-ink);font-weight:700;font-size:.9rem}
 .tablewrap{overflow-x:auto}
-table.admin{border-collapse:collapse;width:100%;min-width:900px;font-size:.88rem}
-table.admin th{text-align:left;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 6px;border-bottom:1px solid var(--line)}
-table.admin td{padding:6px;border-bottom:1px solid var(--line);vertical-align:middle}
-table.admin input,table.admin select{width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:.85rem}
-table.admin input[type=checkbox]{width:auto}
 .formrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:10px;align-items:end}
 .doc a.t{color:inherit;text-decoration:none}
 .doc a.t:hover{text-decoration:underline}
@@ -221,10 +216,6 @@ img{max-width:100%}
 .mobile-only{display:none!important}
 @media (max-width:860px){.nav .mobile-only{display:flex!important}}
 .btn{color:var(--fg)}
-table.admin{min-width:1150px}
-table.admin td:nth-child(1){width:110px}
-table.admin td:nth-child(5){width:150px}
-table.admin td:nth-child(6){width:200px}
 @media (max-width:860px){.chat{grid-template-rows:auto minmax(0,1fr)}.chans{align-items:center}}
 .gauge{height:12px;border-radius:99px;background:var(--surface-2);overflow:hidden;border:1px solid var(--line)}
 .gauge span{display:block;height:100%;border-radius:99px}
@@ -248,13 +239,6 @@ table.admin td:nth-child(6){width:200px}
 .compose .emojibtn{padding:8px 10px;font-size:1.15rem}
 .pushbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:.88rem;color:var(--muted)}
 .pushbar.ok{color:var(--green-ink)}
-/* Autorisations */
-table.perms{border-collapse:collapse;width:100%;min-width:640px;font-size:.88rem}
-table.perms th{text-align:center;font-size:.78rem;padding:6px;border-bottom:1px solid var(--line);vertical-align:bottom}
-table.perms th:first-child{text-align:left}
-table.perms th small{display:block;font-weight:400;color:var(--muted);font-size:.72rem;line-height:1.3;max-width:180px;margin:2px auto 0}
-table.perms td{padding:8px 6px;border-bottom:1px solid var(--line)}
-table.perms input[type=checkbox]{width:20px;height:20px;accent-color:var(--green)}
 /* Calendrier */
 .view.wide{max-width:1400px}
 .calbar{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
@@ -401,8 +385,6 @@ table.perms input[type=checkbox]{width:20px;height:20px;accent-color:var(--green
 .grpchips button{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 11px 5px 9px;font-size:.84rem;font-weight:700;color:var(--muted);display:inline-flex;align-items:center;gap:7px}
 .grpchips button .dot{background:var(--k,var(--green))}
 .grpchips button[aria-pressed="true"]{background:color-mix(in srgb,var(--k,var(--green)) 16%,var(--surface));border-color:var(--k,var(--green));color:var(--fg)}
-.admin .polechips{min-width:240px}
-.admin .polechips button{padding:3px 9px 3px 7px;font-size:.78rem}
 .grpchips button:disabled{opacity:.6}
 .field .hint{font-weight:400;font-size:.76rem;color:var(--muted)}
 .addrbox{position:relative}
@@ -804,3 +786,51 @@ table.praytable td:first-child,table.praytable th:first-child{text-align:left;fo
 .ploptions input{padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:400;font-size:.95rem;color:var(--fg)}
 /* Sur mes messages, le bouton d'actions passe à gauche de la bulle pour laisser les coches accessibles */
 .msg.mine .mmore{right:auto;left:-30px;top:50%;margin-top:-12px;background:var(--surface-2)}
+
+/* Administration : une fiche repliable par chef, lisible sur téléphone */
+.admview .card>h3{margin-bottom:12px}
+.admview .hint{color:var(--muted);font-size:.8rem;font-weight:400;margin:0}
+.mhead{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap}
+.mhead h3{display:flex;align-items:center;gap:8px}
+.mhead .count{font-family:var(--body);font-size:.75rem;font-weight:700;background:var(--surface-2);color:var(--muted);border-radius:99px;padding:2px 9px}
+.mhead input{flex:1 1 200px;max-width:300px;min-width:0;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.mlist{display:flex;flex-direction:column;gap:8px}
+.mcard{border:1px solid var(--line);border-radius:12px;background:var(--surface);transition:border-color .15s}
+.mcard[open]{border-color:color-mix(in srgb,var(--k) 55%,var(--line));box-shadow:var(--shadow)}
+.mcard summary{list-style:none;display:flex;align-items:center;gap:12px;padding:10px 12px;cursor:pointer;border-radius:12px}
+.mcard summary::-webkit-details-marker{display:none}
+.mcard summary:hover{background:var(--surface-2)}
+.mcard summary .av{width:38px;height:38px;border-radius:50%;margin:0;background:var(--k);color:#fff;display:grid;place-items:center;font-weight:800;flex:none}
+.mcard .mwho{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.mcard .mwho small{color:var(--muted);font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mcard .mtags{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.mcard .pill.on{background:var(--green-soft);color:var(--green-ink)}
+.mcard summary>svg{width:18px;height:18px;flex:none;color:var(--muted);transition:transform .2s}
+.mcard[open] summary>svg{transform:rotate(180deg)}
+.mbody{display:flex;flex-direction:column;gap:16px;padding:16px 14px;border-top:1px solid var(--line)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,130px),1fr));gap:12px}
+@media (min-width:861px){.mgrid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
+.mgrid .wide{grid-column:1 / -1}
+.mbody .field.check,#addMember .field.check{padding:0}
+.mactions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.mactions .danger{margin-right:auto}
+.msec{border-top:1px dashed var(--line);padding-top:14px;display:flex;flex-direction:column;gap:4px}
+.msec h4{font-size:.95rem}
+.checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:8px;margin-top:8px}
+.ck{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer}
+.ck input{width:20px;height:20px;margin:1px 0 0;flex:none;accent-color:var(--green)}
+.ck span{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.ck b{font-size:.88rem}
+.ck small{color:var(--muted);font-size:.76rem;margin-top:2px}
+.ck:has(input:checked){border-color:color-mix(in srgb,var(--green) 50%,var(--line));background:var(--green-soft)}
+.ck:has(input:disabled){cursor:default;opacity:.75}
+#addMember{display:flex;flex-direction:column;gap:14px}
+#addMember>h3{margin:0}
+@media (max-width:560px){
+  .mcard summary{flex-wrap:wrap;row-gap:6px}
+  .mcard .mtags{order:3;width:100%;justify-content:flex-start;padding-left:50px}
+  .mhead input{max-width:none}
+  .mactions .btn{flex:1;justify-content:center}
+  .vitrineadm{grid-template-columns:64px minmax(0,1fr);gap:12px}
+  .vitrineadm>div:first-child{width:64px;height:64px}
+}
