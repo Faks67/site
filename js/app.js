@@ -1526,58 +1526,63 @@ function vAdmin() {
   if (!canAdminPage()) return '<div class="view"><div class="empty">Page réservée aux administrateurs.</div></div>';
   const admin = S.me.is_admin;
   const inv = (id) => S.invitations.find((i) => i.member_id === id)?.email || '';
-  const poleChips = (sel, attr, ro) => `<div class="grpchips polechips" role="group" aria-label="Pôles">${S.poles.map((p) => `<button type="button" data-${attr}="${p.id}" aria-pressed="${sel.includes(p.id)}" style="--k:${p.color}" ${ro}><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div>`;
+  const poleChips = (sel, attr, ro) => `<div class="grpchips" role="group" aria-label="Pôles">${S.poles.map((p) => `<button type="button" data-${attr}="${p.id}" aria-pressed="${sel.includes(p.id)}" style="--k:${p.color}" ${ro}><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div>`;
   const opts = (arr, val, empty) => `<option value="">${empty}</option>` + arr.map((x) => `<option value="${x.id}" ${x.id === val ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-  const row = (m) => {
-    const ro = !admin && m.is_admin ? 'disabled' : ''; // la fiche d'un administrateur n'est modifiable que par un administrateur
-    return `<tr data-member="${m.id}">
-    <td><select data-f="title" ${ro}>${['Chef', 'Cheftaine', 'Tata'].map((t) => `<option ${t === m.title ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
-    <td><input data-f="first_name" value="${esc(m.first_name)}" aria-label="Prénom" ${ro}></td>
-    <td><select data-f="group_id" ${ro}>${opts(S.groups, m.group_id, 'Aucun')}</select></td>
-    <td>${poleChips(mPoles(m), 'mpole', ro)}</td>
-    <td><select data-f="role" ${ro}>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
-    <td><input data-f="email" type="email" value="${esc(inv(m.id))}" placeholder="adresse@exemple.fr" aria-label="E-mail" ${ro}></td>
-    <td style="text-align:center">${admin ? `<input data-f="is_admin" type="checkbox" ${m.is_admin ? 'checked' : ''} aria-label="Administrateur">` : m.is_admin ? 'Oui' : ''}</td>
-    <td style="font-size:.8rem;color:var(--muted)">${m.user_id ? 'Compte créé' : inv(m.id) ? 'Invité' : 'Pas d\'accès'}</td>
-    <td style="white-space:nowrap">${ro ? '' : '<button class="btn small" data-savemember>Enregistrer</button> <button class="btn small danger" data-delmember>Retirer</button>'}</td></tr>`;
-  };
-  const permRow = (m) => `<tr><td><b>${esc(display(m))}</b>${m.user_id ? '' : '<small style="display:block;color:var(--muted)">Pas encore de compte</small>'}</td>${m.is_admin
-    ? `<td colspan="${PERMS.length}" style="color:var(--green-ink);font-weight:700">Administrateur : toutes les autorisations</td>`
-    : PERMS.map(([k, l]) => `<td style="text-align:center"><input type="checkbox" data-perm="${k}" data-pmember="${m.id}" ${(m.permissions || []).includes(k) ? 'checked' : ''} aria-label="${esc(l)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
   const poleChans = CHANNELS.filter((c) => c.pole);
-  const chatRow = (m) => `<tr><td><b>${esc(display(m))}</b><small style="display:block;color:var(--muted)">${mPoles(m).length ? (mPoles(m).length > 1 ? 'Pôles : ' : 'Pôle : ') + esc(poleNames(m)) : 'Pas de pôle'}</small></td>${m.is_admin
-    ? `<td colspan="${poleChans.length}" style="color:var(--green-ink);font-weight:700">Administrateur : tous les canaux</td>`
-    : poleChans.map((c) => inPole(m, c.id)
-      ? `<td style="text-align:center"><input type="checkbox" checked disabled title="Son pôle" aria-label="${esc(c.name)} : pôle de ${esc(display(m))}"></td>`
-      : `<td style="text-align:center"><input type="checkbox" data-chatacc="${c.id}" data-cmember="${m.id}" ${(m.chat_channels || []).includes(c.id) ? 'checked' : ''} aria-label="${esc(c.name)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
-  return `<div class="view">
+  const access = (m) => (m.user_id ? ['Compte créé', 'var(--green)'] : inv(m.id) ? ['Invité·e', 'var(--c-yellow)'] : ["Pas d'accès", 'var(--muted)']);
+  // Une fiche par chef, repliée : en-tête résumé, puis fiche, autorisations et discussions des autres pôles
+  const card = (m) => {
+    const ro = !admin && m.is_admin ? 'disabled' : ''; // la fiche d'un administrateur n'est modifiable que par un administrateur
+    const g = grp(m.group_id), [acc, ak] = access(m), np = (m.permissions || []).length;
+    const sub = [g?.name, poleNames(m)].filter(Boolean).join(' · ') || 'Sans groupe ni pôle';
+    return `<details class="mcard" data-member="${m.id}" data-name="${esc(display(m).toLowerCase())}" ${S.admOpen === m.id ? 'open' : ''} style="--k:${g?.color || 'var(--green)'}">
+    <summary><span class="av">${esc(initial(m))}</span><span class="mwho"><b>${esc(display(m))}</b><small>${esc(sub)}</small></span>
+      <span class="mtags">${m.is_admin ? '<span class="pill on">Admin</span>' : np ? `<span class="pill">${np} autorisation${np > 1 ? 's' : ''}</span>` : ''}<span class="pill"><span class="dot" style="--k:${ak}"></span>${acc}</span></span>${ico('down')}</summary>
+    <div class="mbody">
+      <div class="mgrid">
+        <label class="field">Titre<select data-f="title" ${ro}>${['Chef', 'Cheftaine', 'Tata'].map((t) => `<option ${t === m.title ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label class="field">Prénom<input data-f="first_name" value="${esc(m.first_name)}" ${ro}></label>
+        <label class="field">Groupe<select data-f="group_id" ${ro}>${opts(S.groups, m.group_id, 'Aucun')}</select></label>
+        <label class="field">Rôle<select data-f="role" ${ro}>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label class="field wide">E-mail d'accès<input data-f="email" type="email" value="${esc(inv(m.id))}" placeholder="adresse@exemple.fr" ${ro}></label>
+      </div>
+      <div class="field"><span>Pôles</span>${poleChips(mPoles(m), 'mpole', ro)}</div>
+      ${admin ? `<label class="field check"><input data-f="is_admin" type="checkbox" ${m.is_admin ? 'checked' : ''}><span>Administrateur (tous les droits)</span></label>` : ''}
+      ${ro ? '' : `<div class="mactions"><button type="button" class="btn danger" data-delmember>Retirer</button><button type="button" class="btn primary" data-savemember>Enregistrer</button></div>`}
+      ${admin && !m.is_admin ? `<div class="msec"><h4>Autorisations</h4><p class="hint">En plus de consulter, déposer des documents et écrire. Enregistré dès que vous cochez.</p>
+        <div class="checks">${PERMS.map(([k, l, d]) => `<label class="ck"><input type="checkbox" data-perm="${k}" data-pmember="${m.id}" ${(m.permissions || []).includes(k) ? 'checked' : ''}><span><b>${esc(l)}</b><small>${esc(d)}</small></span></label>`).join('')}</div></div>
+      <div class="msec"><h4>Discussions des pôles</h4><p class="hint">Ses pôles sont cochés d'office. Cochez pour lui ouvrir la discussion d'un autre pôle.</p>
+        <div class="checks">${poleChans.map((c) => inPole(m, c.id)
+          ? `<label class="ck"><input type="checkbox" checked disabled><span><b>${esc(c.name)}</b><small>Son pôle</small></span></label>`
+          : `<label class="ck"><input type="checkbox" data-chatacc="${c.id}" data-cmember="${m.id}" ${(m.chat_channels || []).includes(c.id) ? 'checked' : ''}><span><b>${esc(c.name)}</b></span></label>`).join('')}</div></div>` : ''}
+      ${m.is_admin ? '<p class="hint">Administrateur : toutes les autorisations et toutes les discussions.</p>' : ''}
+    </div></details>`;
+  };
+  return `<div class="view admview">
   <div><span class="eyebrow">${admin ? 'Réservé aux administrateurs' : 'Gestion des chefs et des groupes'}</span><h1>Administration</h1>
     <p class="lead" style="margin-top:6px">Ajoutez l'e-mail d'un chef pour lui donner accès : il pourra ensuite créer son compte depuis la page de connexion. Pour retirer un accès, effacez son e-mail ou retirez la personne.</p></div>
-  ${storageGauge()}
+  <div class="card"><div class="mhead"><h3>Chefs et cheftaines <span class="count">${S.members.length}</span></h3>
+    <input type="search" id="admQ" placeholder="Rechercher un prénom" aria-label="Rechercher un chef" autocomplete="off"></div>
+    <p class="hint" style="margin:2px 0 12px">Touchez une personne pour modifier sa fiche${admin ? ', ses autorisations et ses discussions' : ''}.</p>
+    <div class="mlist">${S.members.map(card).join('')}</div></div>
+  <form class="card" id="addMember"><h3>Ajouter une personne</h3>
+    <div class="mgrid">
+      <label class="field" for="nmTitle">Titre<select id="nmTitle"><option>Cheftaine</option><option>Chef</option><option>Tata</option></select></label>
+      <label class="field" for="nmName">Prénom<input id="nmName" required></label>
+      <label class="field" for="nmGroup">Groupe<select id="nmGroup">${opts(S.groups, '', 'Aucun')}</select></label>
+      <label class="field" for="nmRole">Rôle<select id="nmRole">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === 'chef' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field wide" for="nmEmail">E-mail (facultatif)<input id="nmEmail" type="email" placeholder="adresse@exemple.fr"></label>
+    </div>
+    <div class="field"><span>Pôles</span>${poleChips([], 'nmpole', '')}</div>
+    <div class="mactions"><button class="btn primary" type="submit">Ajouter</button></div></form>
+  <div class="card"><h3>Tranches d'âge des groupes</h3><div class="mgrid">
+    ${S.groups.map((g) => `<label class="field" for="age-${g.id}">${esc(g.name)}<input id="age-${g.id}" data-age="${g.id}" value="${esc(g.age_range || '')}" placeholder="ex. 7 à 9 ans"></label>`).join('')}</div>
+    <div class="mactions"><button class="btn" data-saveages>Enregistrer les âges</button></div></div>
   ${admin ? `<div class="card vitrineadm"><div>${S.vitrine ? `<img src="${esc(S.vitrine.url)}" alt="">` : `<span>${ico('up')}</span>`}</div><div style="min-width:0"><h3>Photo de l'accueil</h3>
     <p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Elle s'affiche en haut de l'accueil avec un effet animé. Une image détourée (PNG sans fond) rend le mieux. Elle reste privée : seuls les chefs connectés la voient.</p>
     <div class="row"><label class="btn small${S.vitrineBusy ? ' disabled' : ''}">${ico('up')} ${S.vitrineBusy ? 'Envoi…' : S.vitrine ? 'Changer la photo' : 'Choisir une photo'}<input type="file" id="vitrineFile" accept="image/png,image/webp,image/jpeg" hidden ${S.vitrineBusy ? 'disabled' : ''}></label>
     ${S.vitrine ? '<button class="btn small danger" data-vitrineclear>Retirer</button>' : ''}</div></div></div>` : ''}
-  ${admin ? `<div class="card"><h3>Autorisations</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Cochez ce que chaque chef peut faire en plus de consulter, déposer des documents et écrire. Chaque case est enregistrée tout de suite. Seuls les administrateurs donnent des autorisations.</p>
-    <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${PERMS.map(([k, l, d]) => `<th title="${esc(d)}">${esc(l)}<small>${esc(d)}</small></th>`).join('')}</tr></thead>
-    <tbody>${S.members.map(permRow).join('')}</tbody></table></div></div>` : ''}
-  ${admin ? `<div class="card"><h3>Discussions des pôles</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Chaque chef voit Annonces, Général et le canal de chacun de ses pôles (choisis dans « Chefs et cheftaines » ci-dessous). Cochez pour lui ouvrir aussi la discussion d'un autre pôle. Chaque case est enregistrée tout de suite.</p>
-    <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${poleChans.map((c) => `<th>${esc(c.name)}</th>`).join('')}</tr></thead>
-    <tbody>${S.members.map(chatRow).join('')}</tbody></table></div></div>` : ''}
-  <div class="card"><h3 style="margin-bottom:10px">Chefs et cheftaines</h3><div class="tablewrap"><table class="admin">
-    <thead><tr><th>Titre</th><th>Prénom</th><th>Groupe</th><th>Pôle</th><th>Rôle</th><th>E-mail d'accès</th><th>Admin</th><th>Accès</th><th></th></tr></thead>
-    <tbody>${S.members.map(row).join('')}</tbody></table></div></div>
-  <form class="card" id="addMember"><h3 style="margin-bottom:10px">Ajouter une personne</h3><div class="formrow">
-    <label class="field" for="nmTitle">Titre<select id="nmTitle"><option>Cheftaine</option><option>Chef</option><option>Tata</option></select></label>
-    <label class="field" for="nmName">Prénom<input id="nmName" required></label>
-    <label class="field" for="nmGroup">Groupe<select id="nmGroup">${opts(S.groups, '', 'Aucun')}</select></label>
-    <div class="field"><span>Pôles</span>${poleChips([], 'nmpole', '')}</div>
-    <label class="field" for="nmRole">Rôle<select id="nmRole">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === 'chef' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-    <label class="field" for="nmEmail">E-mail (facultatif)<input id="nmEmail" type="email"></label>
-    <button class="btn primary" type="submit">Ajouter</button></div></form>
-  <div class="card"><h3 style="margin-bottom:10px">Tranches d'âge des groupes</h3><div class="formrow">
-    ${S.groups.map((g) => `<label class="field" for="age-${g.id}">${esc(g.name)}<input id="age-${g.id}" data-age="${g.id}" value="${esc(g.age_range || '')}" placeholder="ex. 7 à 9 ans"></label>`).join('')}
-    <button class="btn" data-saveages>Enregistrer les âges</button></div></div>
+  ${storageGauge()}
   </div>`;
 }
 
@@ -2014,9 +2019,9 @@ root.addEventListener('click', async (e) => {
     const r = await sb.from('messages').delete().eq('id', dm.dataset.delmsg); if (r.error) return fail(r.error);
     S.msgs[S.chan] = S.msgs[S.chan].filter((x) => String(x.id) !== dm.dataset.delmsg); patchChat();
   });
-  const sm = t.closest('[data-savemember]'); if (sm) return saveMember(sm.closest('tr'));
+  const sm = t.closest('[data-savemember]'); if (sm) return saveMember(sm.closest('[data-member]'));
   const rm = t.closest('[data-delmember]'); if (rm) return confirmThen(rm, 'Confirmer le retrait', async () => {
-    const id = rm.closest('tr').dataset.member;
+    const id = rm.closest('[data-member]').dataset.member;
     const r = await sb.from('members').delete().eq('id', id); if (r.error) return fail(r.error);
     S.members = S.members.filter((x) => x.id !== id); S.invitations = S.invitations.filter((i) => i.member_id !== id); render(); toast('Personne retirée');
   });
@@ -2088,6 +2093,9 @@ root.addEventListener('change', (e) => {
 root.addEventListener('input', (e) => { if (e.target.id === 'efAddr') addrInput(e.target); });
 root.addEventListener('focusout', (e) => { if (e.target.id === 'efAddr') setTimeout(addrClose, 150); });
 root.addEventListener('input', (e) => { if (e.target.id === 'libQ') { S.libQ = e.target.value; render(); } });
+// Administration : la fiche ouverte le reste après un enregistrement ; recherche sans redessiner la page
+root.addEventListener('toggle', (e) => { const d = e.target; if (d.classList?.contains('mcard')) { if (d.open) S.admOpen = d.dataset.member; else if (S.admOpen === d.dataset.member) S.admOpen = null; } }, true);
+root.addEventListener('input', (e) => { if (e.target.id === 'admQ') { const q = e.target.value.trim().toLowerCase(); document.querySelectorAll('.mcard').forEach((c) => (c.hidden = !!q && !c.dataset.name.includes(q))); } });
 root.addEventListener('submit', async (e) => {
   const id = e.target.id;
   if (id === 'compose') {
