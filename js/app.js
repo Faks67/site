@@ -172,11 +172,30 @@ async function loadAll() {
 }
 // Message clair quand une table de la mise à jour 6 manque encore dans Supabase
 const needSql = (e) => (['42P01', 'PGRST205', 'PGRST202', '42883'].includes(e?.code) ? new Error('lancez d\'abord la mise à jour SQL 06 dans Supabase') : e);
+/* ---------- Fichiers sur Backblaze B2 (10 Go gratuits), par la fonction Supabase « files » ----------
+   Les nouveaux documents ont un chemin « b2/… » ; les anciens restent dans le stockage Supabase. */
+const isB2 = (path) => path.startsWith('b2/');
+async function filesFn(query, body, type) {
+  const { data } = await sb.auth.getSession();
+  let r;
+  try {
+    r = await fetch(`${SUPABASE_URL}/functions/v1/files${query}`, {
+      method: 'POST', body,
+      headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY, 'Content-Type': type || 'application/json' }
+    });
+  } catch (e) { const err = new Error('stockage Backblaze injoignable'); err.absent = true; throw err; } // fonction pas encore installée
+
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(out.error || `erreur ${r.status}`); e.absent = out.error === 'b2_absent' || r.status === 404; throw e; }
+  return out;
+}
+const b2Links = async (paths) => (paths.length ? (await filesFn('', JSON.stringify({ action: 'read', paths }))).urls || {} : {});
 async function loadThumbs() {
   const imgs = S.docs.filter((d) => d.mime_type?.startsWith('image/') && !S.thumbs[d.file_path]);
   if (!imgs.length) return;
-  const { data } = await sb.storage.from('documents').createSignedUrls(imgs.map((d) => d.file_path), 3600);
-  (data || []).forEach((r) => { if (r.signedUrl) S.thumbs[r.path] = r.signedUrl; });
+  const old = imgs.filter((d) => !isB2(d.file_path)).map((d) => d.file_path), nw = imgs.filter((d) => isB2(d.file_path)).map((d) => d.file_path);
+  if (old.length) { const { data } = await sb.storage.from('documents').createSignedUrls(old, 3600); (data || []).forEach((r) => { if (r.signedUrl) S.thumbs[r.path] = r.signedUrl; }); }
+  if (nw.length) { try { Object.assign(S.thumbs, await b2Links(nw)); } catch (e) { /* les miniatures sont facultatives */ } }
   if (['bibliotheque', 'accueil', 'poles'].includes(S.view)) render();
 }
 // Photo de l'accueil : rangée dans le stockage privé (dossier « vitrine »), jamais dans les fichiers publics du site.
@@ -780,25 +799,39 @@ async function addFiles(files) {
       const f = await compressImage(f0);
       if (f.size > 25 * 1048576) throw new Error(`${f0.name} dépasse 25 Mo`);
       const safe = f.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '_').slice(-80);
-      const path = `${crypto.randomUUID()}/${safe}`;
-      const up = await sb.storage.from('documents').upload(path, f, { contentType: f.type || undefined });
-      if (up.error) throw up.error;
+      let path = null;
+      // D'abord sur Backblaze ; si la fonction « files » n'est pas encore installée, stockage Supabase comme avant
+      if (S.b2 !== false) {
+        try { path = (await filesFn(`?action=upload&name=${encodeURIComponent(safe)}`, f, f.type || 'application/octet-stream')).path; S.b2 = true; }
+        catch (e) { if (!e.absent) throw e; S.b2 = false; }
+      }
+      if (!path) {
+        path = `${crypto.randomUUID()}/${safe}`;
+        const up = await sb.storage.from('documents').upload(path, f, { contentType: f.type || undefined });
+        if (up.error) throw up.error;
+      }
       const isImg = (f.type || '').startsWith('image/');
       const row = { title: f0.name.replace(/\.[^.]+$/, ''), category: isImg && cat !== 'activite' && cat !== 'peda' ? 'photo' : cat, pole_id: pl, file_path: path, mime_type: f.type || null, size_bytes: f.size, uploaded_by: S.me.id };
       const ins = await sb.from('documents').insert(row).select().single();
-      if (ins.error) { await sb.storage.from('documents').remove([path]); throw ins.error; }
+      if (ins.error) { await removeFile(path); throw ins.error; }
       S.docs.unshift(ins.data); done++;
     } catch (e) { fail(e); }
   }
   S.uploading = ''; render(); loadThumbs();
   if (done) toast(done > 1 ? `${done} fichiers ajoutés` : 'Fichier ajouté');
 }
+// Suppression du fichier d'un document (déjà retiré de la base)
+const removeFile = (path) => (isB2(path) ? filesFn('', JSON.stringify({ action: 'delete', path })).catch(() => {}) : sb.storage.from('documents').remove([path]));
 async function openDoc(id) {
   const d = S.docs.find((x) => x.id === id); if (!d) return;
   const w = window.open('', '_blank');
-  const { data, error } = await sb.storage.from('documents').createSignedUrl(d.file_path, 3600);
-  if (error) { w?.close(); return fail(error); }
-  if (w) w.location = data.signedUrl; else location.href = data.signedUrl;
+  let url = null;
+  try {
+    if (isB2(d.file_path)) url = (await b2Links([d.file_path]))[d.file_path];
+    else { const { data, error } = await sb.storage.from('documents').createSignedUrl(d.file_path, 3600); if (error) throw error; url = data.signedUrl; }
+    if (!url) throw new Error('fichier introuvable');
+  } catch (e) { w?.close(); return fail(e); }
+  if (w) w.location = url; else location.href = url;
 }
 
 /* ---------- Calendrier (vues jour, semaine, mois, année, comme dans Teams) ---------- */
@@ -1509,16 +1542,25 @@ async function toggleReaction(id, emoji) {
   }
 }
 
-// Espace de stockage gratuit Supabase : 1 Go. Calculé à partir de la taille des documents enregistrés.
-const STORAGE_LIMIT = 1024 * 1048576;
+// Espaces de stockage gratuits : Backblaze B2 (10 Go) pour les nouveaux documents, Supabase (1 Go) pour les anciens.
+// Calculés à partir de la taille des documents enregistrés.
+const STORAGE_LIMIT = 1024 * 1048576, B2_LIMIT = 10 * 1024 * 1048576;
 function storageGauge() {
-  const used = S.docs.reduce((t, d) => t + (d.size_bytes || 0), 0);
-  const pct = Math.min(100, (used / STORAGE_LIMIT) * 100);
-  const state = pct >= 90 ? 'var(--c-red)' : pct >= 75 ? 'var(--c-yellow)' : 'var(--green)';
-  const mo = (used / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 });
-  return `<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Espace de stockage</h3><b style="font-variant-numeric:tabular-nums">${mo} Mo sur 1 Go</b></div>
-    <div class="gauge" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="Espace de stockage utilisé"><span style="width:${Math.max(pct, 0.5)}%;background:${state}"></span></div>
-    <p style="color:var(--muted);font-size:.85rem;margin-top:8px">${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % utilisés par ${S.docs.length} document${S.docs.length > 1 ? 's' : ''}.${pct >= 75 ? ' Pensez à supprimer les fichiers inutiles ou à mettre les vidéos sur YouTube.' : ''}</p></div>
+  const size = (list) => list.reduce((t, d) => t + (d.size_bytes || 0), 0);
+  const b2 = S.docs.filter((d) => isB2(d.file_path)), old = S.docs.filter((d) => !isB2(d.file_path));
+  const fmt = (n) => (n >= 1073741824 ? (n / 1073741824).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' Go' : (n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' Mo');
+  const bar = (title, list, limit, lim) => {
+    const used = size(list), pct = Math.min(100, (used / limit) * 100);
+    const state = pct >= 90 ? 'var(--c-red)' : pct >= 75 ? 'var(--c-yellow)' : 'var(--green)';
+    return `<div class="gaugerow"><div class="row" style="justify-content:space-between;margin-bottom:6px"><b>${title}</b><span style="font-variant-numeric:tabular-nums;font-weight:700">${fmt(used)} sur ${lim}</span></div>
+      <div class="gauge" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="${esc(title)} : espace utilisé"><span style="width:${Math.max(pct, 0.5)}%;background:${state}"></span></div>
+      <p style="color:var(--muted);font-size:.82rem;margin-top:6px">${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} % utilisés par ${list.length} document${list.length > 1 ? 's' : ''}.${pct >= 75 ? ' Pensez à supprimer les fichiers inutiles ou à mettre les vidéos sur YouTube.' : ''}</p></div>`;
+  };
+  const useB2 = S.b2 !== false;
+  return `<div class="card"><h3 style="margin-bottom:12px">Espace de stockage</h3>
+    ${useB2 ? bar('Backblaze (nouveaux documents)', b2, B2_LIMIT, '10 Go') : ''}
+    ${!useB2 || old.length ? bar(useB2 ? 'Supabase (anciens documents)' : 'Supabase', old, STORAGE_LIMIT, '1 Go') : ''}
+    ${useB2 ? '' : '<p class="hint">Backblaze n\'est pas encore branché : installez la fonction « files » (README, mise à jour 14).</p>'}</div>
 `;
 }
 
@@ -2011,8 +2053,9 @@ root.addEventListener('click', async (e) => {
   const pu = t.closest('[data-push]'); if (pu) return pu.dataset.push === 'on' ? enablePush() : disablePush();
   const dd = t.closest('[data-deldoc]'); if (dd) return confirmThen(dd, 'Confirmer la suppression', async () => {
     const d = S.docs.find((x) => x.id === dd.dataset.deldoc);
-    const r = await sb.from('documents').delete().eq('id', d.id); if (r.error) return fail(r.error);
-    await sb.storage.from('documents').remove([d.file_path]);
+    const r = await sb.from('documents').delete().eq('id', d.id).select('id'); if (r.error) return fail(r.error);
+    if (r.data && !r.data.length) return toast("Vous n'avez pas le droit de supprimer ce document");
+    await removeFile(d.file_path);
     S.docs = S.docs.filter((x) => x.id !== d.id); render(); toast('Document supprimé');
   });
   const dm = t.closest('[data-delmsg]'); if (dm) return confirmThen(dm, 'Confirmer', async () => {

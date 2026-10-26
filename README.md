@@ -102,6 +102,15 @@ Le site est passé de `https://faks67.github.io/site/` à **https://scoutbaytulm
 2. **Fonction d'envoi des notifications** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Les messages du canal Voyages ne sont envoyés qu'aux membres du pôle. La fonction lit désormais la liste des pôles dans la base : un futur pôle ne demandera plus de la redéployer.
 3. **Membres** : dans *Administration > Chefs et cheftaines*, cocher *Voyages* pour les chefs du pôle, puis *Enregistrer*.
 
+## Mise à jour 14 : documents sur Backblaze B2 (10 Go gratuits)
+
+Les nouveaux documents de la bibliothèque sont rangés sur Backblaze B2 (bucket privé, 10 Go gratuits sans carte bancaire) au lieu du stockage Supabase (1 Go). Les anciens documents restent sur Supabase et s'ouvrent comme avant. Tant que la fonction n'est pas installée, le site continue d'utiliser Supabase.
+
+1. **Backblaze** : un bucket **privé** et une clé d'application limitée à ce bucket (lecture et écriture). Aucun réglage CORS n'est nécessaire.
+2. **Secrets** : *Edge Functions > Secrets*, ajouter `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET`, `B2_ENDPOINT` (ex. `s3.eu-central-003.backblazeb2.com`) et `B2_REGION` (ex. `eu-central-003`).
+3. **Fonction** : *Edge Functions > Deploy a new function > Via Editor*, nommer la fonction `files`, coller `supabase/functions/files/index.ts` et cliquer sur *Deploy*. Dans ses réglages, désactiver *Verify JWT* (la fonction vérifie elle-même que l'utilisateur est un chef connecté).
+4. **Vérifier** : déposer un petit document dans la Bibliothèque, puis l'ouvrir. Dans *Administration > Espace de stockage*, il est compté dans « Backblaze (nouveaux documents) ».
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
@@ -117,6 +126,7 @@ Le site est passé de `https://faks67.github.io/site/` à **https://scoutbaytulm
 | `supabase/04-adresses-groupes.sql` | Adresse, coordonnées et groupes des événements |
 | `supabase/05-reclamations.sql` | Réclamations, justificatifs et autorisations de remboursement |
 | `supabase/09-sondages-vu-mentions.sql` | Canaux des pôles réservés, sondages, « vu par » et mentions |
+| `supabase/functions/files/index.ts` | Envoi, lecture et suppression des documents sur Backblaze B2 |
 | `supabase/functions/notify/index.ts` | Envoi des notifications d'annonces |
 | `sw.js`, `manifest.webmanifest` | Réception des notifications et installation sur l'écran d'accueil |
 | `redirection/index.html` | Page à mettre sur l'ancienne adresse (`Faks67/site`) pour renvoyer vers la nouvelle |
