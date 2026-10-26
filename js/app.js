@@ -75,6 +75,7 @@ const isDoyenne = (m) => m.role === 'doyenne' || (m.role === 'principale' && mPo
 // Autorisations que l'administrateur peut donner, action par action
 const PERMS = [
   ['calendrier', 'Calendrier', 'Ajouter, modifier et supprimer les événements'],
+  ['reunions_poles', 'Réunions de pôle', 'Voir les réunions de tous les pôles, même ceux dont il ne fait pas partie'],
   ['bibliotheque', 'Bibliothèque', "Supprimer n'importe quel document"],
   ['discussion', 'Discussion', "Supprimer n'importe quel message"],
   ['membres', 'Chefs et groupes', "Ajouter et modifier les chefs, leurs e-mails d'accès et les groupes"],
@@ -998,7 +999,7 @@ function evModal() {
       <label class="field" for="efUntil" id="efUntilWrap" ${!e.repeat || e.repeat === 'none' ? 'hidden' : ''}>Jusqu'au<input id="efUntil" type="date" value="${esc(e.repeat_until || '')}"></label>
     </div>
     <div class="field"><span>Groupes concernés</span><div class="grpchips" role="group" aria-label="Groupes concernés">${S.groups.map((g) => `<button type="button" data-evgrp="${g.id}" aria-pressed="${(e.group_ids || []).includes(g.id)}" style="--k:${g.color}"><span class="dot"></span>${esc(g.name)}</button>`).join('')}</div><small class="hint">Aucun groupe coché : l'événement concerne toute l'unité.</small></div>
-    <div class="field"><span>Pôles concernés</span><div class="grpchips" role="group" aria-label="Pôles concernés">${S.poles.map((p) => `<button type="button" data-evpole="${p.id}" aria-pressed="${(e.pole_ids || []).includes(p.id)}" style="--k:${p.color}"><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div><small class="hint">Pour une réunion de pôle : seuls les membres des pôles cochés sont concernés (présences). Aucun pôle coché : tous les chefs.</small></div>
+    <div class="field"><span>Pôles concernés</span><div class="grpchips" role="group" aria-label="Pôles concernés">${S.poles.map((p) => `<button type="button" data-evpole="${p.id}" aria-pressed="${(e.pole_ids || []).includes(p.id)}" style="--k:${p.color}"><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div><small class="hint">Réunion de pôle : seuls les membres des pôles cochés la voient et sont attendus (ainsi que les administrateurs et les chefs autorisés à voir les réunions de pôle). Aucun pôle coché : tous les chefs.</small></div>
     <label class="field" for="efLoc">Nom du lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia, base de loisirs…"></label>
     <div class="field addr"><label for="efAddr">Adresse</label>
       <div class="addrbox"><input id="efAddr" autocomplete="off" spellcheck="false" maxlength="200" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="efAddrList" placeholder="Tapez une adresse, ex. 17 rue…" value="${esc(e.address || '')}" ${hasCoords(e) ? `data-lat="${e.lat}" data-lng="${e.lng}" data-ok="1"` : ''}>
