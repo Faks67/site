@@ -89,6 +89,13 @@ Le site est passé de `https://faks67.github.io/site/` à **https://scoutbaytulm
 4. **Redirection de l'ancienne adresse** : sur le compte personnel `Faks67`, créer un nouveau dépôt public nommé `site`, y déposer le fichier `redirection/index.html` de ce dépôt (sous le nom `index.html`), puis activer *Settings > Pages* (branche `main`, dossier `/ (root)`). L'ancienne adresse renvoie alors vers la nouvelle.
 5. **Chaque chef** : ouvrir la nouvelle adresse, remettre l'appli sur l'écran d'accueil (et supprimer l'ancienne icône), se reconnecter et réactiver les notifications avec la cloche.
 
+## Mise à jour 12 : plusieurs pôles par chef et réunions de pôle
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/12-poles-multiples.sql` et cliquer sur *Run*. Le pôle actuel de chaque chef est conservé.
+2. **Fonction d'envoi des notifications** (après l'étape 1) : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts` et cliquer sur *Deploy*. Un chef reçoit alors les messages de tous ses pôles.
+3. **Pôles de chaque chef** : dans *Administration > Chefs et cheftaines*, toucher les pôles d'un chef pour les cocher ou décocher, puis *Enregistrer*. Il voit la discussion de chacun de ses pôles et apparaît dans chacun dans l'organigramme.
+4. **Réunion de pôle** : dans le calendrier, en ajoutant un événement, cocher le ou les *Pôles concernés*. Seuls les membres de ces pôles sont attendus (présences, accueil). Sans pôle coché, rien ne change : tous les chefs sont concernés.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

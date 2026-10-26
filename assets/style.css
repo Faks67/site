@@ -212,6 +212,8 @@ table.admin input[type=checkbox]{width:auto}
 .who b{display:block;color:var(--fg)}
 .themepick{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:var(--muted);font-size:.85rem}
 .themepick .seg button{padding:5px 10px;font-size:.8rem}
+.who .themepick{flex-direction:column;align-items:stretch;gap:4px}
+.who .themepick .seg{display:grid;grid-template-columns:repeat(3,1fr)}
 @media (max-width:860px){.moresheet .themepick{border-top:1px solid var(--line);margin-top:6px;padding:10px 12px 0;font-size:.88rem}}
 .msg .del{background:none;border:0;color:var(--muted);font-size:.75rem;padding:0 0 0 6px}
 @media (max-width:860px){.side .who{display:none}}
@@ -399,6 +401,9 @@ table.perms input[type=checkbox]{width:20px;height:20px;accent-color:var(--green
 .grpchips button{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 11px 5px 9px;font-size:.84rem;font-weight:700;color:var(--muted);display:inline-flex;align-items:center;gap:7px}
 .grpchips button .dot{background:var(--k,var(--green))}
 .grpchips button[aria-pressed="true"]{background:color-mix(in srgb,var(--k,var(--green)) 16%,var(--surface));border-color:var(--k,var(--green));color:var(--fg)}
+.admin .polechips{min-width:240px}
+.admin .polechips button{padding:3px 9px 3px 7px;font-size:.78rem}
+.grpchips button:disabled{opacity:.6}
 .field .hint{font-weight:400;font-size:.76rem;color:var(--muted)}
 .addrbox{position:relative}
 .addrbox input{width:100%}
