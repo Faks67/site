@@ -67,12 +67,13 @@ async function sendAll(admin: Db, subs: Sub[], payload: string, ttl = 86400) {
   return sent;
 }
 // Canaux des pôles : seulement les chefs du pôle, les administrateurs et ceux à qui l'accès a été ouvert
-// (même règle que public.can_see_channel, mise à jour SQL 09)
+// (même règle que public.can_see_channel, mises à jour SQL 09 et 12)
 const POLE_CHANNELS = ['peda', 'formation', 'event', 'support'];
-type Member = { id: string; is_admin: boolean; pole_id: string | null; chat_channels: string[] | null };
+type Member = { id: string; is_admin: boolean; pole_id: string | null; pole_ids: string[] | null; chat_channels: string[] | null };
 async function allowedMembers(admin: Db, channel: string): Promise<Set<string>> {
-  const { data } = await admin.from('members').select('id, is_admin, pole_id, chat_channels');
+  const { data } = await admin.from('members').select('id, is_admin, pole_id, pole_ids, chat_channels');
   return new Set((data || []).filter((m: Member) => !POLE_CHANNELS.includes(channel) || m.is_admin || m.pole_id === channel
+    || (m.pole_ids || []).includes(channel)
     || (m.chat_channels || []).includes(channel)).map((m: Member) => m.id));
 }
 // Appareils des chefs qui suivent ce canal (sans choix enregistré : les annonces)

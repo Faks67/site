@@ -66,7 +66,11 @@ const grp = (id) => S.groups.find((g) => g.id === id);
 const pole = (id) => S.poles.find((p) => p.id === id);
 const display = (m) => (m ? `${m.title} ${m.first_name}` : 'Ancien membre');
 const initial = (m) => (m ? m.first_name.charAt(0).toUpperCase() : '?');
-const isDoyenne = (m) => m.role === 'doyenne' || (m.role === 'principale' && m.pole_id);
+// Pôles d'un chef (il peut en avoir plusieurs ; pole_id reste l'ancien champ, rempli avec le premier)
+const mPoles = (m) => (m?.pole_ids?.length ? m.pole_ids : m?.pole_id ? [m.pole_id] : []);
+const inPole = (m, id) => mPoles(m).includes(id);
+const poleNames = (m) => mPoles(m).map((id) => pole(id)?.short_name).filter(Boolean).join(', ');
+const isDoyenne = (m) => m.role === 'doyenne' || (m.role === 'principale' && mPoles(m).length > 0);
 // Autorisations que l'administrateur peut donner, action par action
 const PERMS = [
   ['calendrier', 'Calendrier', 'Ajouter, modifier et supprimer les événements'],
@@ -80,7 +84,7 @@ const can = (p) => !!S.me && (S.me.is_admin || (S.me.permissions || []).includes
 const canAdminPage = () => can('membres');
 const canRecl = () => can('reclamation') || can('remboursement');
 // Canaux de discussion : ceux des pôles sont réservés aux chefs du pôle (même règle que supabase/09-sondages-vu-mentions.sql)
-const seesChan = (m, id) => { const c = CHANNELS.find((x) => x.id === id); return !!m && !!c && (!c.pole || m.is_admin || m.pole_id === id || (m.chat_channels || []).includes(id)); };
+const seesChan = (m, id) => { const c = CHANNELS.find((x) => x.id === id); return !!m && !!c && (!c.pole || m.is_admin || inPole(m, id) || (m.chat_channels || []).includes(id)); };
 const myChannels = () => CHANNELS.filter((c) => seesChan(S.me, c.id));
 const ROLES = { principale: 'Cheffe principale', doyenne: 'Doyenne', chef: 'Chef / cheftaine', stagiaire: 'Stagiaire' };
 
@@ -407,8 +411,8 @@ function paintBell() { const b = $('#bell'); if (b) b.outerHTML = bellHtml(); }
 
 /* ---------- Vues ---------- */
 function chefChip(m, sub) {
-  const g = grp(m.group_id); const po = pole(m.pole_id);
-  const s = sub ?? [g?.name, po?.short_name].filter(Boolean).join(' · ');
+  const g = grp(m.group_id);
+  const s = sub ?? [g?.name, poleNames(m)].filter(Boolean).join(' · ');
   return `<div class="chef" style="--k:${g?.color || 'var(--green)'}"><div class="av">${esc(initial(m))}</div><div style="min-width:0"><span>${esc(display(m))}</span><small>${esc(s)}</small></div></div>`;
 }
 function docRow(d) {
@@ -416,11 +420,16 @@ function docRow(d) {
   return `<div class="it"><div class="ficon" style="--k:${c.k}">${esc(ext(d))}</div><div style="min-width:0"><button class="linkbtn t" style="text-decoration:none;color:var(--fg);text-align:left" data-open="${esc(d.id)}">${esc(d.title)}</button><div class="m">${esc(c.name)} · ${fmtDate(d.created_at)}</div></div></div>`;
 }
 const ext = (d) => (d.file_path.split('.').pop() || 'FICHIER').toUpperCase().slice(0, 4);
-const nextEvent = () => occurrences(today(), addDays(today(), 400))[0];
+// Prochain rendez-vous : on saute les réunions des pôles dont on ne fait pas partie
+const nextEvent = () => occurrences(today(), addDays(today(), 400)).find((o) => !(o.e.pole_ids || []).length || o.e.pole_ids.some((p) => inPole(S.me, p)));
 
 /* ---------- Présences aux rendez-vous (présent par défaut, on n'enregistre que les absences) ---------- */
-// Chefs concernés : ceux des groupes de l'événement (sans groupe coché : toute l'unité) et ceux qui n'ont pas de groupe
-const concerned = (e) => { const gs = e.group_ids || []; return S.members.filter((m) => !gs.length || !m.group_id || gs.includes(m.group_id)); };
+// Chefs concernés : ceux des groupes de l'événement (sans groupe coché : toute l'unité) et ceux qui n'ont pas de groupe ;
+// si des pôles sont cochés (réunion de pôle), seulement les membres de ces pôles
+const concerned = (e) => {
+  const gs = e.group_ids || [], ps = e.pole_ids || [];
+  return S.members.filter((m) => (!gs.length || !m.group_id || gs.includes(m.group_id)) && (!ps.length || mPoles(m).some((p) => ps.includes(p))));
+};
 const isAbsent = (o, mid) => S.absences.some((a) => a.event_id === o.e.id && a.occ_date === o.start && a.member_id === mid);
 const absentsOf = (o) => S.absences.filter((a) => a.event_id === o.e.id && a.occ_date === o.start).map((a) => member(a.member_id)).filter(Boolean);
 const absAttrs = (o, mid, absent) => `data-absev="${esc(o.e.id)}" data-absday="${o.start}" data-absmem="${mid}" data-absset="${absent ? 1 : 0}"`;
@@ -660,13 +669,13 @@ function vOrg() {
   const mainPoles = S.poles.filter((p) => p.id !== 'support');
   const tag = (m) => `<span class="otag" style="--k:${grp(m.group_id)?.color || 'var(--green)'}">${esc(display(m))}</span>`;
   const poleCols = mainPoles.map((p) => {
-    const doy = S.members.filter((m) => m.pole_id === p.id && isDoyenne(m));
-    const others = S.members.filter((m) => m.pole_id === p.id && !isDoyenne(m));
+    const doy = S.members.filter((m) => inPole(m, p.id) && isDoyenne(m));
+    const others = S.members.filter((m) => inPole(m, p.id) && !isDoyenne(m));
     return `<div class="col"><div class="node poleNode" style="--k:${p.color}"><div class="n">${esc(p.name)}</div>
       <div class="olbl">Doyenne</div><div class="otags">${doy.length ? doy.map(tag).join('') : '<span class="r">à désigner</span>'}</div>
       <div class="olbl">Membres</div><div class="otags">${others.length ? others.map(tag).join('') : '<span class="r">à attribuer</span>'}</div></div></div>`;
   }).join('');
-  const ochef = (m) => `<div class="ochef" style="--k:${grp(m.group_id)?.color || 'var(--green)'}"><div class="av">${esc(initial(m))}</div><div><small>${esc(m.title)}${isDoyenne(m) ? ' · doyenne' : ''}</small><b>${esc(m.first_name)}</b><small>${esc(pole(m.pole_id)?.short_name || 'Pôle à attribuer')}</small></div></div>`;
+  const ochef = (m) => `<div class="ochef" style="--k:${grp(m.group_id)?.color || 'var(--green)'}"><div class="av">${esc(initial(m))}</div><div><small>${esc(m.title)}${isDoyenne(m) ? ' · doyenne' : ''}</small><b>${esc(m.first_name)}</b><small>${esc(poleNames(m) || 'Pôle à attribuer')}</small></div></div>`;
   const grpCols = S.groups.map((g) => {
     const chefs = S.members.filter((m) => m.group_id === g.id);
     return `<div class="col"><div class="node grp" style="--k:${g.color}"><h4>${esc(g.name)}</h4><div class="r">${g.age_range ? esc(g.age_range) + ' · ' : ''}${chefs.length} chef${chefs.length > 1 ? 's' : ''}</div>
@@ -674,7 +683,7 @@ function vOrg() {
   }).join('');
   const unassigned = S.members.filter((m) => !m.group_id && m.role !== 'principale');
   return `<div class="view wide">
-  <div><span class="eyebrow">Unité 2026/2027</span><h1>Organigramme</h1><p class="lead" style="margin-top:6px">Chaque chef et cheftaine appartient à un groupe et à un pôle. Seuls les adultes figurent ici.${can('membres') ? ' Modifiez les affectations depuis la page Administration.' : ''}</p></div>
+  <div><span class="eyebrow">Unité 2026/2027</span><h1>Organigramme</h1><p class="lead" style="margin-top:6px">Chaque chef et cheftaine appartient à un groupe et à un ou plusieurs pôles. Seuls les adultes figurent ici.${can('membres') ? ' Modifiez les affectations depuis la page Administration.' : ''}</p></div>
   <div class="card org-wrap"><div class="org">
     <div class="row" style="justify-content:center">${top.map((m) => `<div class="node top"><div class="av">${esc(initial(m))}</div><div class="n" style="font-size:1.15rem">${esc(display(m))}</div><div class="r">Cheffe principale de l'unité</div></div>`).join('') || '<div class="node top"><div class="n">Cheffe principale</div><div class="r">à désigner</div></div>'}</div>
     <div class="vline"></div>
@@ -689,7 +698,7 @@ function vOrg() {
 function vPoles() {
   const p = pole(S.poleTab) || S.poles[0]; if (!p) return '<div class="view"><div class="empty">Aucun pôle.</div></div>';
   const c = POLE_CONTENT[p.id] || { tag: '', lead: '', mission: '', missions: [], compo: [], blocks: [] };
-  const mem = S.members.filter((m) => m.pole_id === p.id);
+  const mem = S.members.filter((m) => inPole(m, p.id));
   const doy = mem.filter(isDoyenne);
   const pd = S.docs.filter((d) => d.pole_id === p.id);
   return `<div class="view">
@@ -953,6 +962,7 @@ function evModal() {
       <label class="field" for="efUntil" id="efUntilWrap" ${!e.repeat || e.repeat === 'none' ? 'hidden' : ''}>Jusqu'au<input id="efUntil" type="date" value="${esc(e.repeat_until || '')}"></label>
     </div>
     <div class="field"><span>Groupes concernés</span><div class="grpchips" role="group" aria-label="Groupes concernés">${S.groups.map((g) => `<button type="button" data-evgrp="${g.id}" aria-pressed="${(e.group_ids || []).includes(g.id)}" style="--k:${g.color}"><span class="dot"></span>${esc(g.name)}</button>`).join('')}</div><small class="hint">Aucun groupe coché : l'événement concerne toute l'unité.</small></div>
+    <div class="field"><span>Pôles concernés</span><div class="grpchips" role="group" aria-label="Pôles concernés">${S.poles.map((p) => `<button type="button" data-evpole="${p.id}" aria-pressed="${(e.pole_ids || []).includes(p.id)}" style="--k:${p.color}"><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div><small class="hint">Pour une réunion de pôle : seuls les membres des pôles cochés sont concernés (présences). Aucun pôle coché : tous les chefs.</small></div>
     <label class="field" for="efLoc">Nom du lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia, base de loisirs…"></label>
     <div class="field addr"><label for="efAddr">Adresse</label>
       <div class="addrbox"><input id="efAddr" autocomplete="off" spellcheck="false" maxlength="200" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="efAddrList" placeholder="Tapez une adresse, ex. 17 rue…" value="${esc(e.address || '')}" ${hasCoords(e) ? `data-lat="${e.lat}" data-lng="${e.lng}" data-ok="1"` : ''}>
@@ -1003,6 +1013,7 @@ async function saveEvent() {
     title: v('#efTitle'), category: $('#efCat').value, date: start, end_date: end === start ? null : end, all_day: allDay,
     start_time: allDay ? null : v('#efStartT') || null, end_time: allDay ? null : v('#efEndT') || null,
     location: v('#efLoc') || null, group_ids: [...document.querySelectorAll('[data-evgrp][aria-pressed="true"]')].map((b) => b.dataset.evgrp),
+    pole_ids: [...document.querySelectorAll('[data-evpole][aria-pressed="true"]')].map((b) => b.dataset.evpole),
     address: addrOk ? v('#efAddr') : null, lat: addrOk ? Number($('#efAddr').dataset.lat) : null, lng: addrOk ? Number($('#efAddr').dataset.lng) : null, details: v('#efDetails') || null, repeat, repeat_until: repeat === 'none' ? null : v('#efUntil') || null
   };
   const id = S.evModal.ev.id;
@@ -1063,7 +1074,7 @@ function paintMentions() {
   const box = $('#mentions'); if (!box) return;
   const mt = S.mention;
   box.hidden = !mt;
-  box.innerHTML = mt ? mt.list.map((x, n) => `<button type="button" role="option" data-tag="${x.id}" aria-selected="${n === mt.sel}" style="--k:${grp(x.group_id)?.color || 'var(--muted)'}"><span class="av">${esc(initial(x))}</span><b>${esc(display(x))}</b>${x.pole_id ? `<small>${esc(pole(x.pole_id)?.short_name || '')}</small>` : ''}</button>`).join('') : '';
+  box.innerHTML = mt ? mt.list.map((x, n) => `<button type="button" role="option" data-tag="${x.id}" aria-selected="${n === mt.sel}" style="--k:${grp(x.group_id)?.color || 'var(--muted)'}"><span class="av">${esc(initial(x))}</span><b>${esc(display(x))}</b>${mPoles(x).length ? `<small>${esc(poleNames(x))}</small>` : ''}</button>`).join('') : '';
 }
 function pickMention(id) {
   const i = $('#msgIn'), mt = S.mention, x = member(id); if (!i || !mt || !x) return;
@@ -1515,6 +1526,7 @@ function vAdmin() {
   if (!canAdminPage()) return '<div class="view"><div class="empty">Page réservée aux administrateurs.</div></div>';
   const admin = S.me.is_admin;
   const inv = (id) => S.invitations.find((i) => i.member_id === id)?.email || '';
+  const poleChips = (sel, attr, ro) => `<div class="grpchips polechips" role="group" aria-label="Pôles">${S.poles.map((p) => `<button type="button" data-${attr}="${p.id}" aria-pressed="${sel.includes(p.id)}" style="--k:${p.color}" ${ro}><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div>`;
   const opts = (arr, val, empty) => `<option value="">${empty}</option>` + arr.map((x) => `<option value="${x.id}" ${x.id === val ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
   const row = (m) => {
     const ro = !admin && m.is_admin ? 'disabled' : ''; // la fiche d'un administrateur n'est modifiable que par un administrateur
@@ -1522,7 +1534,7 @@ function vAdmin() {
     <td><select data-f="title" ${ro}>${['Chef', 'Cheftaine', 'Tata'].map((t) => `<option ${t === m.title ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
     <td><input data-f="first_name" value="${esc(m.first_name)}" aria-label="Prénom" ${ro}></td>
     <td><select data-f="group_id" ${ro}>${opts(S.groups, m.group_id, 'Aucun')}</select></td>
-    <td><select data-f="pole_id" ${ro}>${opts(S.poles, m.pole_id, 'À attribuer')}</select></td>
+    <td>${poleChips(mPoles(m), 'mpole', ro)}</td>
     <td><select data-f="role" ${ro}>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === m.role ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
     <td><input data-f="email" type="email" value="${esc(inv(m.id))}" placeholder="adresse@exemple.fr" aria-label="E-mail" ${ro}></td>
     <td style="text-align:center">${admin ? `<input data-f="is_admin" type="checkbox" ${m.is_admin ? 'checked' : ''} aria-label="Administrateur">` : m.is_admin ? 'Oui' : ''}</td>
@@ -1533,9 +1545,9 @@ function vAdmin() {
     ? `<td colspan="${PERMS.length}" style="color:var(--green-ink);font-weight:700">Administrateur : toutes les autorisations</td>`
     : PERMS.map(([k, l]) => `<td style="text-align:center"><input type="checkbox" data-perm="${k}" data-pmember="${m.id}" ${(m.permissions || []).includes(k) ? 'checked' : ''} aria-label="${esc(l)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
   const poleChans = CHANNELS.filter((c) => c.pole);
-  const chatRow = (m) => `<tr><td><b>${esc(display(m))}</b><small style="display:block;color:var(--muted)">${m.pole_id ? 'Pôle : ' + esc(pole(m.pole_id)?.short_name || m.pole_id) : 'Pas de pôle'}</small></td>${m.is_admin
+  const chatRow = (m) => `<tr><td><b>${esc(display(m))}</b><small style="display:block;color:var(--muted)">${mPoles(m).length ? (mPoles(m).length > 1 ? 'Pôles : ' : 'Pôle : ') + esc(poleNames(m)) : 'Pas de pôle'}</small></td>${m.is_admin
     ? `<td colspan="${poleChans.length}" style="color:var(--green-ink);font-weight:700">Administrateur : tous les canaux</td>`
-    : poleChans.map((c) => m.pole_id === c.id
+    : poleChans.map((c) => inPole(m, c.id)
       ? `<td style="text-align:center"><input type="checkbox" checked disabled title="Son pôle" aria-label="${esc(c.name)} : pôle de ${esc(display(m))}"></td>`
       : `<td style="text-align:center"><input type="checkbox" data-chatacc="${c.id}" data-cmember="${m.id}" ${(m.chat_channels || []).includes(c.id) ? 'checked' : ''} aria-label="${esc(c.name)} pour ${esc(display(m))}"></td>`).join('')}</tr>`;
   return `<div class="view">
@@ -1549,7 +1561,7 @@ function vAdmin() {
   ${admin ? `<div class="card"><h3>Autorisations</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Cochez ce que chaque chef peut faire en plus de consulter, déposer des documents et écrire. Chaque case est enregistrée tout de suite. Seuls les administrateurs donnent des autorisations.</p>
     <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${PERMS.map(([k, l, d]) => `<th title="${esc(d)}">${esc(l)}<small>${esc(d)}</small></th>`).join('')}</tr></thead>
     <tbody>${S.members.map(permRow).join('')}</tbody></table></div></div>` : ''}
-  ${admin ? `<div class="card"><h3>Discussions des pôles</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Chaque chef voit Annonces, Général et le canal de son pôle (choisi dans « Chefs et cheftaines » ci-dessous). Cochez pour lui ouvrir aussi la discussion d'un autre pôle. Chaque case est enregistrée tout de suite.</p>
+  ${admin ? `<div class="card"><h3>Discussions des pôles</h3><p style="color:var(--muted);font-size:.9rem;margin:4px 0 10px">Chaque chef voit Annonces, Général et le canal de chacun de ses pôles (choisis dans « Chefs et cheftaines » ci-dessous). Cochez pour lui ouvrir aussi la discussion d'un autre pôle. Chaque case est enregistrée tout de suite.</p>
     <div class="tablewrap"><table class="perms"><thead><tr><th>Chef ou cheftaine</th>${poleChans.map((c) => `<th>${esc(c.name)}</th>`).join('')}</tr></thead>
     <tbody>${S.members.map(chatRow).join('')}</tbody></table></div></div>` : ''}
   <div class="card"><h3 style="margin-bottom:10px">Chefs et cheftaines</h3><div class="tablewrap"><table class="admin">
@@ -1559,7 +1571,7 @@ function vAdmin() {
     <label class="field" for="nmTitle">Titre<select id="nmTitle"><option>Cheftaine</option><option>Chef</option><option>Tata</option></select></label>
     <label class="field" for="nmName">Prénom<input id="nmName" required></label>
     <label class="field" for="nmGroup">Groupe<select id="nmGroup">${opts(S.groups, '', 'Aucun')}</select></label>
-    <label class="field" for="nmPole">Pôle<select id="nmPole">${opts(S.poles, '', 'À attribuer')}</select></label>
+    <div class="field"><span>Pôles</span>${poleChips([], 'nmpole', '')}</div>
     <label class="field" for="nmRole">Rôle<select id="nmRole">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === 'chef' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="field" for="nmEmail">E-mail (facultatif)<input id="nmEmail" type="email"></label>
     <button class="btn primary" type="submit">Ajouter</button></div></form>
@@ -1686,7 +1698,11 @@ async function openReceipt(id) {
 /* ---------- Adresses (Base Adresse Nationale) et carte des activités ---------- */
 const hasCoords = (e) => e && e.lat != null && e.lng != null;
 const evGroups = (e) => (e.group_ids || []).map(grp).filter(Boolean);
-const grpPills = (e) => { const gs = evGroups(e); return `<div class="row" style="gap:6px">${gs.length ? gs.map((g) => `<span class="pill"><span class="dot" style="--k:${g.color}"></span>${esc(g.name)}</span>`).join('') : '<span class="pill"><span class="dot"></span>Toute l\'unité</span>'}</div>`; };
+const grpPills = (e) => {
+  const gs = evGroups(e), ps = (e.pole_ids || []).map(pole).filter(Boolean);
+  const pill = (k, l) => `<span class="pill"><span class="dot" style="--k:${k}"></span>${esc(l)}</span>`;
+  return `<div class="row" style="gap:6px">${ps.map((p) => pill(p.color, p.short_name)).join('')}${gs.length ? gs.map((g) => pill(g.color, g.name)).join('') : ps.length ? '' : '<span class="pill"><span class="dot"></span>Toute l\'unité</span>'}</div>`;
+};
 const placeLinks = (e) => `<a class="btn small" href="https://waze.com/ul?ll=${e.lat},${e.lng}&navigate=yes" target="_blank" rel="noopener">Waze</a><a class="btn small" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}" target="_blank" rel="noopener">Google Maps</a>`;
 
 // Service public et gratuit de l'IGN : toutes les adresses de France, sans clé
@@ -1908,6 +1924,7 @@ root.addEventListener('click', async (e) => {
   if (t.matches('[data-closemore]')) { S.moreOpen = false; return render(); }
   // Carte et adresses
   const ad = t.closest('[data-addr]'); if (ad) return addrPick(Number(ad.dataset.addr));
+  const pc = t.closest('[data-evpole], [data-mpole], [data-nmpole]'); if (pc && !pc.disabled) { pc.setAttribute('aria-pressed', pc.getAttribute('aria-pressed') !== 'true'); return; }
   const eg = t.closest('[data-evgrp]'); if (eg) { eg.setAttribute('aria-pressed', eg.getAttribute('aria-pressed') !== 'true'); return; }
   const mg = t.closest('[data-mapgrp]'); if (mg) { const id = mg.dataset.mapgrp; S.mapGroups = !id ? [] : S.mapGroups.includes(id) ? S.mapGroups.filter((x) => x !== id) : [...S.mapGroups, id]; return refreshMap(); }
   const mgo = t.closest('[data-mapgo]'); if (mgo) return focusOnMap(mgo.dataset.mapgo);
@@ -2028,9 +2045,11 @@ async function setInvitation(memberId, email) {
     S.invitations.push(r.data);
   }
 }
+// Pôles cochés : pole_ids pour la liste complète, pole_id (ancien champ) avec le premier
+const poleFields = (box, attr) => { const ids = [...box.querySelectorAll(`[data-${attr}][aria-pressed="true"]`)].map((b) => b.dataset[attr]); return { pole_ids: ids, pole_id: ids[0] || null }; };
 async function saveMember(tr) {
   const id = tr.dataset.member; const f = (k) => tr.querySelector(`[data-f="${k}"]`);
-  const patch = { title: f('title').value, first_name: f('first_name').value.trim(), group_id: f('group_id').value || null, pole_id: f('pole_id').value || null, role: f('role').value };
+  const patch = { title: f('title').value, first_name: f('first_name').value.trim(), group_id: f('group_id').value || null, ...poleFields(tr, 'mpole'), role: f('role').value };
   if (f('is_admin')) patch.is_admin = f('is_admin').checked;
   if (!patch.first_name) return toast('Le prénom est obligatoire');
   try {
@@ -2082,7 +2101,7 @@ root.addEventListener('submit', async (e) => {
   if (id === 'recForm') { e.preventDefault(); if (!S.recBusy) submitRecl(e.target); return; }
   if (id === 'addMember') {
     e.preventDefault();
-    const row = { title: $('#nmTitle').value, first_name: $('#nmName').value.trim(), group_id: $('#nmGroup').value || null, pole_id: $('#nmPole').value || null, role: $('#nmRole').value };
+    const row = { title: $('#nmTitle').value, first_name: $('#nmName').value.trim(), group_id: $('#nmGroup').value || null, ...poleFields($('#addMember'), 'nmpole'), role: $('#nmRole').value };
     const email = $('#nmEmail').value.trim().toLowerCase();
     const r = await sb.from('members').insert(row).select().single(); if (r.error) return fail(r.error);
     S.members.push(r.data); S.members.sort((a, b) => a.first_name.localeCompare(b.first_name, 'fr'));
