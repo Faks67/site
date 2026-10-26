@@ -178,11 +178,13 @@ const needSql = (e) => (['42P01', 'PGRST205', 'PGRST202', '42883'].includes(e?.c
 const isB2 = (path) => path.startsWith('b2/');
 async function filesFn(query, body, type) {
   const { data } = await sb.auth.getSession();
+  const upload = /[?&]action=upload/.test(query) ? decodeURIComponent(/[?&]name=([^&]*)/.exec(query)?.[1] || 'fichier') : null;
   let r;
   try {
     r = await fetch(`${SUPABASE_URL}/functions/v1/files${query}`, {
       method: 'POST', body,
-      headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY, 'Content-Type': type || 'application/json' }
+      headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY, 'Content-Type': type || 'application/json',
+        ...(upload ? { 'x-files-action': 'upload', 'x-file-name': encodeURIComponent(upload) } : {}) }
     });
   } catch (e) { const err = new Error('stockage Backblaze injoignable'); err.absent = true; throw err; } // fonction pas encore installée
 
