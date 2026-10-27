@@ -11,6 +11,8 @@ self.addEventListener('push', (event) => {
     badge: 'assets/icon-192.png',
     tag: data.tag || 'annonce',
     renotify: !!data.renotify,
+    requireInteraction: !!data.requireInteraction, // appel : reste affiché jusqu'à ce qu'on le touche
+    vibrate: data.requireInteraction ? [400, 200, 400, 200, 400] : undefined,
     data: { url: data.url || './#annonces' }
   }));
 });

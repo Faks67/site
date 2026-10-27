@@ -280,6 +280,9 @@ async function loadMessages(ch) {
   const { data, error } = await sb.from('messages').select('*').eq('channel', ch).order('created_at', { ascending: false }).limit(200);
   if (error) return fail(error);
   S.msgs[ch] = data.reverse();
+  // Historique des appels (les appels encore en cours sont relus pour avoir leur état à jour)
+  const callIds = data.filter((m) => m.call_id && (!S.calls[m.call_id] || !S.calls[m.call_id].ended_at)).map((m) => m.call_id);
+  if (callIds.length) { callIds.forEach((id) => { if (S.calls[id] && !S.calls[id].ended_at) delete S.calls[id]; }); loadCalls(callIds); }
   const ids = data.map((m) => m.id), polls = data.filter((m) => m.poll_options).map((m) => m.id);
   // Réactions, votes des sondages et lectures du canal (« vu par ») ; sans la mise à jour 9, les deux derniers restent vides
   const [r, v, rd] = await Promise.all([
@@ -299,6 +302,7 @@ function startRealtime() {
   S.realtime = sb.channel('messages-live')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: m }) => {
       setOverview(m);
+      if (m.call_id) { if (!S.calls[m.call_id]) loadCalls([m.call_id]).then(() => { const c = S.calls[m.call_id]; if (c && callLive(c)) S.activeCalls[c.channel] = c; paintCallJoin(); if (m.member_id !== S.me?.id && isDmId(m.channel)) ringIn(c); }); }
       if (m.member_id !== S.me?.id) {
         clearTyping(m.channel, m.member_id);
         if (viewingChat() && S.chan === m.channel) markRead(m.channel);
@@ -434,7 +438,7 @@ async function refreshData() {
   const before = snap();
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
-  loadVitrine(); loadUnread(); loadOverview(); loadQuiz();
+  loadVitrine(); loadUnread(); loadOverview(); loadQuiz(); loadActiveCalls(); callsRealtime();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
   // Les conversations restent en mémoire (ouverture instantanée) ; celle affichée est rechargée tout de suite,
@@ -488,6 +492,7 @@ setInterval(() => {
   if (Date.now() - lastVersionCheck >= VERSION_MS) checkVersion();
   touchPresence();
   if (S.view === 'defi' && Date.now() - quizBoardAt > 10000) loadQuizBoard(); // classement en direct
+  if (S.view === 'discussion' && Date.now() - activeAt > 15000) loadActiveCalls(); // appels en cours
   applyUpdate();
 }, 5000);
 // « En ligne » : on signale sa présence au plus une fois par minute tant que l'appli est ouverte (mise à jour SQL 17)
@@ -1639,6 +1644,7 @@ function msgsHtml() {
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
     prev = m;
+    if (m.call_id) return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}${callLogHtml(m)}`;
     const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length;
     const voice = !gif && !poll && /^audio\//.test(m.attach_type || ''), att = !gif && !poll && !voice && m.attach_name;
     const loc = m.loc_lat != null, ev = !!m.event_ref, card = voice || loc || ev;
@@ -1795,7 +1801,7 @@ function convSub(c) {
   const who = S.members.filter((x) => seesChan(x, c.id));
   return `<small>${who.length} membre${who.length > 1 ? 's' : ''} · ${esc(who.slice(0, 4).map((x) => x.first_name).join(', '))}${who.length > 4 ? '…' : ''}</small>`;
 }
-const convHeadHtml = (c) => `<button class="convback" data-convback aria-label="Retour aux conversations">${ico('back')}</button><button class="convinfo-btn" data-convinfo aria-label="Infos de la conversation">${convAv(c, 'sm')}<span class="convwho" id="convsub"><b>${esc(c.name)}</b>${convSub(c)}</span></button>`;
+const convHeadHtml = (c) => `<button class="convback" data-convback aria-label="Retour aux conversations">${ico('back')}</button><button class="convinfo-btn" data-convinfo aria-label="Infos de la conversation">${convAv(c, 'sm')}<span class="convwho" id="convsub"><b>${esc(c.name)}</b>${convSub(c)}</span></button>${callBtnsHtml(c)}`;
 function paintConvHead() { const h = $('#convhead'); if (h && S.chan) h.innerHTML = convHeadHtml(convOf(S.chan)); }
 function openConv(id) {
   if (!seesChan(S.me, id)) return;
@@ -1834,6 +1840,7 @@ function vChat() {
   <section class="convlist card">${convListHtml()}</section>
   <section class="convpane card chat">${c ? `
     <div class="convhead" id="convhead">${convHeadHtml(c)}</div>
+    <div id="calljoin">${callJoinHtml(S.chan)}</div>
     <div class="msgs${c.dm ? ' dm' : ''}" id="msgs" data-chan="${esc(S.chan)}">${msgsHtml()}</div>
     <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
     <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
@@ -2858,6 +2865,494 @@ function aiShareTo(ch, i) {
   toast('Relisez le texte, puis envoyez');
 }
 
+/* ---------- Appels audio et vidéo (mise à jour SQL 23) ----------
+   Les images et le son passent directement d'un appareil à l'autre (WebRTC, chiffré de bout en bout).
+   Supabase sert seulement à se trouver : un canal temps réel par appel (présence + signaux de connexion).
+   Chaque connexion a 4 pistes fixes : micro, caméra, écran, son de l'écran. Couper la caméra ou partager
+   l'écran remplace simplement une piste, sans renégocier la connexion. */
+const CALL_SLOTS = ['audio', 'video', 'video', 'audio']; // micro, caméra, écran, son de l'écran
+const CALL_MAX_VIDEO = 8;
+let CALL = null, RING = null, iceCache = null, callsCh = null;
+S.calls = {}; S.activeCalls = {};
+const callLive = (c) => c && !c.ended_at && Date.now() - Date.parse(c.last_ping) < 60000;
+const callDur = (s) => (s < 60 ? `${Math.max(1, Math.round(s))} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, '0')}`);
+const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return (s >= 3600 ? Math.floor(s / 3600) + ':' : '') + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const canCall = (ch) => !!ch && ch !== 'annonces' && !!window.RTCPeerConnection && !!navigator.mediaDevices?.getUserMedia;
+const callSqlErr = (e) => (['42P01', 'PGRST202', 'PGRST205', '42883'].includes(e?.code) ? new Error("lancez d'abord la mise à jour SQL 23 dans Supabase") : e);
+const PHONE_ICO = '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>';
+const HANG_ICO = '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" transform="rotate(135 12 12)"/>';
+const svg = (p, w = 22) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const CI = {
+  phone: PHONE_ICO, hang: HANG_ICO, cam: '<path d="M15 10l5-3v10l-5-3z"/><rect x="3" y="6" width="12" height="12" rx="2"/>',
+  camoff: '<path d="M3 3l18 18M15 10l5-3v10l-3-1.8M10 6h3a2 2 0 0 1 2 2v3M15 15v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  micoff: '<path d="M3 3l18 18M9 9v2a3 3 0 0 0 5 2M15 10V6a3 3 0 0 0-6 0M5 11a7 7 0 0 0 11 5.5M19 11a7 7 0 0 1-.5 2.5M12 18v3"/>',
+  flip: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><path d="M9 13a3 3 0 0 1 5-2M15 14a3 3 0 0 1-5 2"/>',
+  screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M12 13V7M9 10l3-3 3 3"/>',
+  hand: '<path d="M8 13V5a1.5 1.5 0 0 1 3 0v6M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11V5.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7 6 6 0 0 1-5-3l-2.5-4.5a1.5 1.5 0 0 1 2.5-1.5L8 15"/>',
+  ppl: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5"/>',
+  min: '<path d="M6 9l6 6 6-6"/>', smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14a4 4 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>'
+};
+
+// Serveurs pour se trouver sur internet (STUN), plus le relais Cloudflare s'il est configuré (fonction « turn »)
+async function iceServers() {
+  if (iceCache && Date.now() - iceCache.at < 6 * 3600e3) return iceCache.list;
+  let list = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+  try {
+    const { data } = await sb.auth.getSession();
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 4000);
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/turn`, { method: 'POST', signal: ac.signal, headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY } });
+    clearTimeout(t);
+    if (r.ok) { const o = await r.json(); if (o.iceServers?.length) list = list.concat(o.iceServers); }
+  } catch (e) { /* pas de relais : les connexions directes suffisent le plus souvent */ }
+  iceCache = { at: Date.now(), list };
+  return list;
+}
+
+// ---------- Historique et appels en cours ----------
+async function loadCalls(ids) {
+  const need = [...new Set(ids)].filter((id) => id && !S.calls[id]);
+  if (!need.length) return;
+  const r = await sb.from('calls').select('*').in('id', need);
+  if (r.error) return;
+  r.data.forEach((c) => (S.calls[c.id] = c));
+  if (S.view === 'discussion' && S.chan) { patchChat(); paintCallJoin(); }
+}
+let activeAt = 0;
+async function loadActiveCalls() {
+  if (!S.me) return;
+  activeAt = Date.now();
+  const r = await sb.from('calls').select('*').is('ended_at', null).gt('last_ping', new Date(Date.now() - 60000).toISOString());
+  if (r.error) return;
+  S.activeCalls = {};
+  r.data.forEach((c) => { S.calls[c.id] = c; S.activeCalls[c.channel] = c; });
+  paintCallJoin();
+  // Ouvert depuis la notification « Appel de… » : l'appel sonne s'il vient de commencer
+  for (const c of r.data) if (isDmId(c.channel) && c.started_by !== S.me.id && !c.active.includes(S.me.id) && Date.now() - Date.parse(c.started_at) < 45000) ringIn(c);
+}
+function callsRealtime() {
+  if (callsCh || !S.me) return;
+  callsCh = sb.channel('calls-live').on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, ({ new: c }) => {
+    if (!c?.id) return;
+    S.calls[c.id] = c;
+    if (callLive(c)) S.activeCalls[c.channel] = c; else if (S.activeCalls[c.channel]?.id === c.id) delete S.activeCalls[c.channel];
+    if (RING?.call.id === c.id && c.ended_at) stopRing('Appel manqué');
+    if (S.view === 'discussion' && S.chan === c.channel) { patchChat(); paintCallJoin(); }
+  }).subscribe();
+}
+// Message « Appel vidéo » dans la conversation : historique, ou bouton « Rejoindre » pendant l'appel
+function callLogHtml(m) {
+  const c = S.calls[m.call_id], video = (m.body || '').startsWith('📹'), mine = m.member_id === S.me.id, dm = isDmId(m.channel);
+  const live = callLive(c), who = member(m.member_id);
+  const end = c && (c.ended_at || (!live && c.last_ping));
+  const dur = c?.answered_at && end ? callDur((Date.parse(end) - Date.parse(c.answered_at)) / 1000) : '';
+  const missed = c && !live && !c.answered_at;
+  const title = live ? (dm ? (mine ? 'Appel en cours…' : `${esc(who?.first_name || '')} vous appelle`) : `${mine ? 'Vous avez' : esc(display(who)) + ' a'} lancé un appel ${video ? 'vidéo' : 'audio'}`)
+    : dm ? (missed ? (mine ? 'Sans réponse' : 'Appel manqué') : `Appel ${video ? 'vidéo' : 'audio'}`) : `Appel ${video ? 'vidéo' : 'audio'} de ${mine ? 'vous' : esc(display(who))}`;
+  const act = live && CALL?.id !== c.id ? `<button type="button" class="clact" data-calljoin="${c.id}">Rejoindre</button>`
+    : !live && dm && missed && !mine ? `<button type="button" class="clact" data-call="${video ? 'video' : 'audio'}">Rappeler</button>` : '';
+  return `<div class="calllog${missed && !mine ? ' miss' : ''}${live ? ' live' : ''}" data-mid="${m.id}"><span class="clic">${svg(video ? CI.cam : CI.phone, 18)}</span><span class="clt"><b>${title}</b><small>${hm(m.created_at)}${dur ? ' · ' + dur : ''}${live && !dm && c.active.length ? ` · ${c.active.length} participant${c.active.length > 1 ? 's' : ''}` : ''}</small></span>${act}</div>`;
+}
+// Bandeau « Appel en cours · Rejoindre » en haut de la conversation
+function callJoinHtml(ch) {
+  const c = S.activeCalls[ch];
+  if (!callLive(c) || CALL?.id === c.id) return '';
+  const names = c.active.map((id) => member(id)?.first_name).filter(Boolean);
+  const mins = Math.floor((Date.now() - Date.parse(c.started_at)) / 60000);
+  return `<div class="calljoin"><span class="pulse"></span><span class="cjt"><b>Appel ${c.kind === 'video' ? 'vidéo' : 'audio'} en cours${mins ? ' · ' + mins + ' min' : ''}</b><small>${esc(names.slice(0, 2).join(', '))}${names.length > 2 ? ` et ${names.length - 2} autre${names.length > 3 ? 's' : ''}` : ''}</small></span><button type="button" data-calljoin="${c.id}">Rejoindre</button></div>`;
+}
+function paintCallJoin() { const b = $('#calljoin'); if (b) b.innerHTML = callJoinHtml(S.chan); }
+const callBtnsHtml = (c) => (canCall(c.id) ? `<button class="callbtn" data-call="audio" aria-label="Appel audio">${svg(CI.phone, 20)}</button><button class="callbtn" data-call="video" aria-label="Appel vidéo">${svg(CI.cam, 20)}</button>` : '');
+
+// ---------- Micro et caméra ----------
+const CAM_OPTS = (facing) => ({ facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } });
+async function callMedia(kind) {
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  try { return await navigator.mediaDevices.getUserMedia({ audio, video: kind === 'video' ? CAM_OPTS('user') : false }); }
+  catch (e) {
+    if (kind === 'video') { try { const s = await navigator.mediaDevices.getUserMedia({ audio }); toast('Caméra indisponible : appel en audio'); return s; } catch (e2) { /* ci-dessous */ } }
+    toast(e.name === 'NotAllowedError' ? 'Autorisez le micro (et la caméra) pour appeler.' : 'Micro introuvable.');
+    return null;
+  }
+}
+// Sonnerie (entrante) et tonalité d'attente (sortante), sans fichier son
+function callTone(kind) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)(), g = ac.createGain(); g.gain.value = 0.0001; g.connect(ac.destination);
+    const o = ac.createOscillator(); o.frequency.value = kind === 'in' ? 660 : 425; o.connect(g); o.start();
+    const vol = kind === 'in' ? 0.22 : 0.08, len = kind === 'in' ? 0.8 : 1.4;
+    const beat = () => { const t = ac.currentTime; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.04); g.gain.setValueAtTime(vol, t + len); g.gain.linearRampToValueAtTime(0.0001, t + len + 0.05); if (kind === 'in') navigator.vibrate?.([400, 200, 400]); };
+    beat(); const iv = setInterval(beat, kind === 'in' ? 2000 : 4000);
+    return () => { clearInterval(iv); ac.close().catch(() => {}); navigator.vibrate?.(0); };
+  } catch (e) { return () => {}; }
+}
+
+// ---------- Lancer, rejoindre, répondre ----------
+async function callStart(kind) {
+  const ch = S.chan;
+  if (CALL) { if (CALL.channel === ch) return callMin(false); return toast('Vous êtes déjà en appel.'); }
+  if (!canCall(ch)) return toast('Les appels ne sont pas possibles avec ce navigateur.');
+  const live = S.activeCalls[ch]; if (callLive(live)) return callJoin(live.id);
+  const ice = iceServers();
+  const media = await callMedia(kind); if (!media) return;
+  const r = await sb.rpc('call_start', { p_channel: ch, p_kind: kind });
+  if (r.error) { media.getTracks().forEach((t) => t.stop()); return fail(callSqlErr(r.error)); }
+  const { call, message_id, joined } = r.data;
+  if (message_id) sb.functions.invoke('notify', { body: { action: 'notify', message_id } }).catch(() => {});
+  callEnter(call, media, await ice, { outgoing: !joined && isDmId(ch) });
+}
+async function callJoin(id) {
+  if (CALL) { if (CALL.id === id) return callMin(false); return toast('Vous êtes déjà en appel.'); }
+  const c = S.calls[id]; if (!c) return;
+  const ice = iceServers();
+  const full = (c.active?.length || 0) >= CALL_MAX_VIDEO;
+  if (full && c.kind === 'video') toast(`${CALL_MAX_VIDEO} personnes déjà en vidéo : vous rejoignez caméra coupée.`);
+  const media = await callMedia(full ? 'audio' : c.kind); if (!media) return;
+  const r = await sb.rpc('call_join', { p_call: id });
+  if (r.error) { media.getTracks().forEach((t) => t.stop()); return fail(callSqlErr(r.error)); }
+  callEnter(r.data, media, await ice, {});
+}
+// Appel entrant (conversation privée) : plein écran avec sonnerie
+function ringIn(call) {
+  if (CALL || RING || !call || call.ended_at) return;
+  const from = member(call.started_by); if (!from) return;
+  RING = { call, stop: callTone('in') };
+  RING.ch = sb.channel('call-' + call.id, { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'end' }, () => stopRing('Appel manqué')).subscribe();
+  RING.timer = setTimeout(() => stopRing('Appel manqué'), 45000);
+  const el = document.createElement('div'); el.id = 'callring'; el.className = 'callring'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Appel entrant');
+  el.innerHTML = `<div class="crtop"><span class="crav" style="--k:${grp(from.group_id)?.color || 'var(--green)'}">${esc(initial(from))}</span><h2>${esc(display(from))}</h2><p>Appel ${call.kind === 'video' ? 'vidéo' : 'audio'} entrant…</p></div>
+    <div class="crbtns"><button type="button" data-ring="no"><span class="red">${svg(CI.hang, 28)}</span>Refuser</button>
+    ${call.kind === 'video' ? `<button type="button" data-ring="audio"><span class="gl">${svg(CI.phone, 28)}</span>Audio seul</button>` : ''}
+    <button type="button" data-ring="${call.kind}"><span class="grn">${svg(call.kind === 'video' ? CI.cam : CI.phone, 28)}</span>Répondre</button></div>`;
+  el.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-ring]'); if (!b) return;
+    const k = b.dataset.ring, c = RING?.call;
+    if (k === 'no') { RING?.ch?.send({ type: 'broadcast', event: 'decline', payload: {} }); return stopRing(); }
+    stopRing(); if (!c) return;
+    S.calls[c.id] = c;
+    const ice = iceServers(), media = await callMedia(k); if (!media) return;
+    const r = await sb.rpc('call_join', { p_call: c.id });
+    if (r.error) { media.getTracks().forEach((t) => t.stop()); return fail(callSqlErr(r.error)); }
+    callEnter(r.data, media, await ice, {});
+  });
+  document.body.append(el);
+}
+function stopRing(msg) {
+  if (!RING) return;
+  const r = RING; RING = null;
+  r.stop(); clearTimeout(r.timer); if (r.ch) sb.removeChannel(r.ch);
+  $('#callring')?.remove();
+  if (msg) toast(msg);
+  if (S.view === 'discussion') patchChat();
+}
+
+// ---------- L'appel ----------
+function callEnter(call, media, ice, opt) {
+  S.calls[call.id] = call;
+  CALL = { id: call.id, channel: call.channel, kind: call.kind, dm: isDmId(call.channel), startedAt: Date.parse(call.started_at), since: null,
+    pid: crypto.randomUUID(), ice, peers: new Map(), pres: {}, early: {}, outgoing: !!opt.outgoing, hadPeer: false,
+    mic: media.getAudioTracks()[0] || null, cam: media.getVideoTracks()[0] || null, scr: null, scrA: null,
+    micOn: true, facing: 'user', hand: false, min: false, panel: null, els: {} };
+  CALL.camOn = !!CALL.cam;
+  callUi();
+  try { navigator.wakeLock?.request('screen').then((w) => { if (CALL) CALL.wake = w; else w.release(); }, () => {}); } catch (e) { /* facultatif */ }
+  const ch = sb.channel('call-' + call.id, { config: { broadcast: { self: false }, presence: { key: CALL.pid } } });
+  ch.on('broadcast', { event: 'sig' }, ({ payload }) => onSig(payload))
+    .on('broadcast', { event: 'react' }, ({ payload }) => showReact(payload.e))
+    .on('broadcast', { event: 'end' }, () => { if (CALL?.dm) callHangup(false, 'Appel terminé'); })
+    .on('broadcast', { event: 'decline' }, () => { if (CALL?.dm && !CALL.hadPeer) callHangup(true, 'Appel refusé'); })
+    .on('presence', { event: 'sync' }, onPresence)
+    .subscribe((st) => { if (st === 'SUBSCRIBED' && CALL?.ch === ch) ch.track(myPres()); });
+  CALL.ch = ch;
+  CALL.ping = setInterval(() => sb.rpc('call_ping', { p_call: call.id }), 20000);
+  CALL.clock = setInterval(paintClock, 1000);
+  if (CALL.outgoing) {
+    CALL.stopTone = callTone('out');
+    CALL.noAnswer = setTimeout(() => { if (CALL && !CALL.hadPeer) callHangup(true, 'Pas de réponse'); }, 45000);
+  }
+  if (S.view === 'discussion') { patchChat(); paintCallJoin(); }
+}
+const myPres = () => ({ mid: S.me.id, mic: CALL.micOn, cam: CALL.camOn, scr: !!CALL.scr, hand: CALL.hand });
+const sendPres = () => CALL?.ch?.track(myPres());
+const sig = (to, data) => CALL?.ch?.send({ type: 'broadcast', event: 'sig', payload: { from: CALL.pid, to, ...data } });
+const localTrack = (i) => [CALL.mic, CALL.cam, CALL.scr, CALL.scrA][i] || null;
+function onPresence() {
+  if (!CALL) return;
+  const st = CALL.ch.presenceState(), pres = {};
+  for (const [k, arr] of Object.entries(st)) { const p = arr[arr.length - 1]; if (k !== CALL.pid && p?.mid) pres[k] = p; }
+  CALL.pres = pres;
+  const ids = Object.keys(pres);
+  // Pour chaque paire, celui dont l'identifiant est le plus grand ouvre la connexion (jamais les deux à la fois)
+  ids.forEach((pid) => { if (!CALL.peers.has(pid) && CALL.pid > pid) connectPeer(pid, true); });
+  [...CALL.peers.keys()].forEach((pid) => { if (!pres[pid]) dropPeer(pid); });
+  if (ids.length) {
+    if (!CALL.hadPeer) { CALL.hadPeer = true; CALL.since = Date.now(); CALL.stopTone?.(); clearTimeout(CALL.noAnswer); }
+    clearTimeout(CALL.alone);
+  } else if (CALL.dm && CALL.hadPeer) {
+    // L'autre a quitté (ou perdu le réseau) : on attend un peu avant de raccrocher
+    clearTimeout(CALL.alone); CALL.alone = setTimeout(() => { if (CALL && !Object.keys(CALL.pres).length) callHangup(false, 'Appel terminé'); }, 10000);
+  }
+  paintCall();
+}
+function connectPeer(pid, offerer) {
+  const pc = new RTCPeerConnection({ iceServers: CALL.ice });
+  const p = { pid, pc, cam: new MediaStream(), scr: new MediaStream(), ready: offerer, offerer };
+  CALL.peers.set(pid, p);
+  pc.onicecandidate = (e) => { if (e.candidate) sig(pid, { ice: e.candidate.toJSON() }); };
+  pc.ontrack = (e) => {
+    const i = pc.getTransceivers().indexOf(e.transceiver);
+    (i < 2 ? p.cam : p.scr).addTrack(e.track);
+    e.track.onunmute = () => paintCall();
+    paintCall();
+  };
+  pc.onconnectionstatechange = () => {
+    if (!CALL) return;
+    if (pc.connectionState === 'connected') { tuneBitrates(); }
+    if (pc.connectionState === 'failed' && p.offerer) restartPeer(p);
+    paintCall();
+  };
+  if (offerer) {
+    CALL_SLOTS.forEach((k, i) => pc.addTransceiver(localTrack(i) || k, { direction: 'sendrecv' }));
+    (async () => { try { await pc.setLocalDescription(await pc.createOffer()); sig(pid, { sdp: pc.localDescription.toJSON() }); } catch (e) { console.error('offre', e); } })();
+  }
+  return p;
+}
+async function restartPeer(p) {
+  try { p.pc.restartIce?.(); await p.pc.setLocalDescription(await p.pc.createOffer({ iceRestart: true })); sig(p.pid, { sdp: p.pc.localDescription.toJSON() }); } catch (e) { console.error('relance', e); }
+}
+async function onSig(m) {
+  if (!CALL || m.to !== CALL.pid) return;
+  let p = CALL.peers.get(m.from);
+  try {
+    if (m.sdp?.type === 'offer') {
+      if (!p) p = connectPeer(m.from, false);
+      await p.pc.setRemoteDescription(m.sdp);
+      if (!p.ready) { p.pc.getTransceivers().forEach((t, i) => { t.direction = 'sendrecv'; t.sender.replaceTrack(localTrack(i)); }); p.ready = true; }
+      await p.pc.setLocalDescription(await p.pc.createAnswer());
+      sig(m.from, { sdp: p.pc.localDescription.toJSON() });
+      for (const c of CALL.early[m.from] || []) await p.pc.addIceCandidate(c).catch(() => {});
+      delete CALL.early[m.from];
+    } else if (m.sdp?.type === 'answer' && p) {
+      await p.pc.setRemoteDescription(m.sdp);
+      for (const c of CALL.early[m.from] || []) await p.pc.addIceCandidate(c).catch(() => {});
+      delete CALL.early[m.from];
+    } else if (m.ice) {
+      if (p?.pc.remoteDescription) await p.pc.addIceCandidate(m.ice).catch(() => {});
+      else (CALL.early[m.from] = CALL.early[m.from] || []).push(m.ice);
+    }
+  } catch (e) { console.error('signal', e); }
+}
+function dropPeer(pid) {
+  const p = CALL.peers.get(pid); if (!p) return;
+  p.pc.close(); CALL.peers.delete(pid);
+  Object.keys(CALL.els).filter((k) => k.startsWith(pid)).forEach((k) => { CALL.els[k].remove(); delete CALL.els[k]; });
+}
+// Qualité d'image adaptée au nombre de personnes (chacun envoie son image à tous les autres)
+function tuneBitrates() {
+  if (!CALL) return;
+  const n = CALL.peers.size, cam = n <= 1 ? 900e3 : n <= 3 ? 450e3 : 250e3, scr = n <= 3 ? 1500e3 : 800e3;
+  CALL.peers.forEach((p) => p.pc.getTransceivers().forEach((t, i) => {
+    if (i !== 1 && i !== 2) return;
+    const prm = t.sender.getParameters(); if (!prm.encodings?.length) prm.encodings = [{}];
+    prm.encodings[0].maxBitrate = i === 1 ? cam : scr;
+    t.sender.setParameters(prm).catch(() => {});
+  }));
+}
+const replaceAll = (i, track) => CALL.peers.forEach((p) => { const t = p.pc.getTransceivers()[i]; if (t) t.sender.replaceTrack(track).catch(() => {}); });
+function callHangup(endForAll, msg) {
+  if (!CALL) return;
+  const c = CALL; CALL = null;
+  [c.ping, c.clock, c.vuTimer].forEach(clearInterval); [c.noAnswer, c.alone].forEach(clearTimeout); c.stopTone?.();
+  if (endForAll && c.dm) c.ch.send({ type: 'broadcast', event: 'end', payload: {} });
+  c.peers.forEach((p) => p.pc.close());
+  [c.mic, c.cam, c.scr, c.scrA].forEach((t) => t?.stop());
+  c.vu?.close().catch(() => {});
+  try { c.wake?.release(); } catch (e) { /* facultatif */ }
+  setTimeout(() => sb.removeChannel(c.ch), 300);
+  sb.rpc('call_leave', { p_call: c.id, p_end: !!(c.dm && endForAll) }).then(() => loadActiveCalls());
+  $('#callui')?.remove();
+  if (msg) toast(msg);
+  if (S.view === 'discussion') { patchChat(); paintCallJoin(); }
+}
+
+// ---------- Boutons ----------
+function callMic() { if (!CALL?.mic) return; CALL.micOn = !CALL.micOn; CALL.mic.enabled = CALL.micOn; sendPres(); paintCall(); }
+async function callCam() {
+  if (!CALL) return;
+  if (CALL.camOn) { CALL.cam?.stop(); CALL.cam = null; CALL.camOn = false; replaceAll(1, null); }
+  else {
+    if (Object.keys(CALL.pres).length >= CALL_MAX_VIDEO) return toast(`${CALL_MAX_VIDEO} personnes maximum en vidéo.`);
+    try { const s = await navigator.mediaDevices.getUserMedia({ video: CAM_OPTS(CALL.facing) }); if (!CALL) return s.getTracks().forEach((t) => t.stop()); CALL.cam = s.getVideoTracks()[0]; CALL.camOn = true; replaceAll(1, CALL.cam); tuneBitrates(); }
+    catch (e) { return toast('Caméra indisponible.'); }
+  }
+  sendPres(); paintCall();
+}
+async function callFlip() {
+  if (!CALL?.cam) return;
+  const facing = CALL.facing === 'user' ? 'environment' : 'user';
+  try {
+    CALL.cam.stop(); // certains téléphones n'ouvrent pas deux caméras à la fois
+    const s = await navigator.mediaDevices.getUserMedia({ video: CAM_OPTS(facing) });
+    if (!CALL) return s.getTracks().forEach((t) => t.stop());
+    CALL.cam = s.getVideoTracks()[0]; CALL.facing = facing; replaceAll(1, CALL.cam); paintCall();
+  } catch (e) { toast('Impossible de changer de caméra.'); }
+}
+async function callShare() {
+  if (!CALL) return;
+  if (CALL.scr) return stopShare();
+  if (!navigator.mediaDevices.getDisplayMedia) return toast("Le partage d'écran se fait depuis un ordinateur.");
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include', selfBrowserSurface: 'exclude', surfaceSwitching: 'include' });
+    if (!CALL) return s.getTracks().forEach((t) => t.stop());
+    CALL.scr = s.getVideoTracks()[0]; CALL.scrA = s.getAudioTracks()[0] || null;
+    CALL.scr.contentHint = 'detail';
+    CALL.scr.onended = stopShare;
+    replaceAll(2, CALL.scr); replaceAll(3, CALL.scrA); tuneBitrates();
+    if (!CALL.scrA) toast("Partage sans le son : cochez « Partager l'audio » pour l'inclure.");
+    sendPres(); paintCall();
+  } catch (e) { if (e.name !== 'NotAllowedError') toast("Partage d'écran impossible."); }
+}
+function stopShare() {
+  if (!CALL?.scr) return;
+  CALL.scr.stop(); CALL.scrA?.stop(); CALL.scr = CALL.scrA = null;
+  replaceAll(2, null); replaceAll(3, null); sendPres(); paintCall();
+}
+function callHand() { if (!CALL) return; CALL.hand = !CALL.hand; sendPres(); paintCall(); }
+const REACTS = ['👍', '❤️', '😂', '👏', '🎉', '🤲'];
+function callReact(e) { if (!CALL) return; CALL.ch.send({ type: 'broadcast', event: 'react', payload: { e } }); showReact(e); CALL.panel = null; paintCall(); }
+function showReact(e) {
+  const box = $('#cuReact'); if (!box || !REACTS.includes(e)) return;
+  const s = document.createElement('span'); s.textContent = e; s.style.left = 10 + Math.random() * 60 + 'px';
+  box.append(s); setTimeout(() => s.remove(), 2600);
+}
+function callMin(on) { if (!CALL) return; CALL.min = on; $('#callui')?.classList.toggle('min', on); }
+
+// ---------- Écran d'appel (en dehors du reste de la page : il ne bouge pas quand la page se redessine) ----------
+function callUi() {
+  const el = document.createElement('div'); el.id = 'callui'; el.className = 'callui'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Appel en cours');
+  el.innerHTML = `<div class="cutop"><button type="button" class="cumin" data-cu="min" aria-label="Réduire l'appel">${svg(CI.min)}</button><span class="cuwho" id="cuWho"></span><span class="cutime" id="cuTime"></span></div>
+    <button type="button" class="cupill" data-cu="max"><i></i><span id="cuPill">Appel en cours</span><b>Revenir</b></button>
+    <div class="custage" id="cuStage"></div><div class="cureact" id="cuReact"></div><div class="cupanel" id="cuPanel" hidden></div>
+    <div class="cuctrls" id="cuCtrls"></div><div class="cuaudio" id="cuAudio" hidden></div>`;
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cu]'); if (!b) return;
+    const a = b.dataset.cu;
+    if (a === 'min') return callMin(true);
+    if (a === 'max') return callMin(false);
+    if (a === 'mic') return callMic();
+    if (a === 'cam') return callCam();
+    if (a === 'flip') return callFlip();
+    if (a === 'share') return callShare();
+    if (a === 'hand') return callHand();
+    if (a === 'react' || a === 'ppl') { CALL.panel = CALL.panel === a ? null : a; return paintCall(); }
+    if (a.startsWith('r:')) return callReact(a.slice(2));
+    if (a === 'hang') return callHangup(true);
+  });
+  // Vignette déplaçable (appel à deux)
+  el.addEventListener('pointerdown', (e) => {
+    const pip = e.target.closest('.tile.pip'); if (!pip) return;
+    const r = pip.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const mv = (ev) => { pip.style.left = Math.max(4, Math.min(innerWidth - r.width - 4, ev.clientX - dx)) + 'px'; pip.style.top = Math.max(4, Math.min(innerHeight - r.height - 4, ev.clientY - dy)) + 'px'; pip.style.right = 'auto'; };
+    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  });
+  document.body.append(el);
+  paintCall();
+}
+// Un élément vidéo (ou audio) par flux, gardé d'un dessin à l'autre pour ne jamais couper l'image
+function mediaEl(key, stream, kind, muted) {
+  let v = CALL.els[key];
+  if (!v) { v = document.createElement(kind); v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.muted = muted; CALL.els[key] = v; }
+  if (v.srcObject !== stream) v.srcObject = stream;
+  if (v.paused) v.play().catch(() => {});
+  return v;
+}
+const hasVideo = (s) => s.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted);
+function paintCall() {
+  const ui = $('#callui'); if (!ui || !CALL) return;
+  const peers = Object.entries(CALL.pres), conv = convOf(CALL.channel);
+  const n = peers.length + 1;
+  $('#cuWho').innerHTML = `<b>${esc(conv.name)}</b><small>${CALL.outgoing && !CALL.hadPeer ? 'Appel en cours…' : !peers.length ? "En attente d'autres participants…" : `${n} participant${n > 1 ? 's' : ''} · 🔒 chiffré`}</small>`;
+  // Le son des autres : un lecteur audio caché par personne (les vidéos restent muettes)
+  const aud = $('#cuAudio');
+  CALL.peers.forEach((p) => { aud.append(mediaEl(p.pid + ':a', p.cam, 'audio', false)); if (p.scr.getAudioTracks().length) aud.append(mediaEl(p.pid + ':sa', p.scr, 'audio', false)); });
+  // Les tuiles
+  const tiles = [], screens = [];
+  const me = { key: 'me', name: 'Vous', m: S.me, cam: CALL.camOn && CALL.cam, mic: CALL.micOn, hand: CALL.hand };
+  if (CALL.scr) screens.push({ key: 'me:s', name: 'Votre écran', stream: new MediaStream([CALL.scr]), mine: true });
+  for (const [pid, pr] of peers) {
+    const p = CALL.peers.get(pid), m = member(pr.mid);
+    tiles.push({ key: pid, pid, name: m ? m.first_name : 'Chef', m, stream: p?.cam, cam: pr.cam && p && hasVideo(p.cam), mic: pr.mic, hand: pr.hand, state: p?.pc.connectionState });
+    if (pr.scr && p && hasVideo(p.scr)) screens.push({ key: pid + ':s', name: 'Écran de ' + (m ? m.first_name : 'Chef'), stream: p.scr });
+  }
+  const tileEl = (t, extra = '') => {
+    const d = document.createElement('div'); d.className = `tile ${extra}`; d.dataset.pid = t.pid || 'me';
+    if (t.cam) { const v = mediaEl(t.key + ':v', t.key === 'me' ? new MediaStream([CALL.cam]) : t.stream, 'video', true); if (t.key === 'me' && CALL.facing === 'user') v.classList.add('mirror'); else v.classList.remove('mirror'); d.append(v); }
+    else d.insertAdjacentHTML('beforeend', `<span class="tav" style="--k:${grp(t.m?.group_id)?.color || 'var(--green)'}">${esc(initial(t.m))}</span>`);
+    d.insertAdjacentHTML('beforeend', `<span class="tnm">${t.mic ? '' : svg(CI.micoff, 13)}${esc(t.name)}</span>${t.hand ? '<span class="thand">✋</span>' : ''}${t.state && !['connected', 'new'].includes(t.state) ? `<span class="tstate">${t.state === 'failed' ? 'Connexion perdue' : 'Connexion…'}</span>` : ''}`);
+    return d;
+  };
+  const stage = $('#cuStage'); stage.innerHTML = ''; stage.className = 'custage';
+  if (screens.length) {
+    stage.classList.add('share');
+    const big = document.createElement('div'); big.className = 'tile screen';
+    const sv = mediaEl(screens[0].key, screens[0].stream, 'video', true); sv.classList.remove('mirror'); big.append(sv);
+    big.insertAdjacentHTML('beforeend', `<span class="tnm">${esc(screens[0].name)}</span>`);
+    const strip = document.createElement('div'); strip.className = 'strip';
+    [...tiles, me].forEach((t) => strip.append(tileEl(t)));
+    stage.append(big, strip);
+  } else if (tiles.length === 1) {
+    stage.classList.add('duo'); stage.append(tileEl(tiles[0], 'full'), tileEl(me, 'pip'));
+  } else if (!tiles.length) {
+    stage.classList.add('solo');
+    const t = tileEl(me, 'full');
+    if (CALL.dm) { const o = convOf(CALL.channel).other; t.insertAdjacentHTML('beforeend', `<div class="waiting"><span class="tav big" style="--k:${grp(o?.group_id)?.color || 'var(--green)'}">${esc(initial(o))}</span><b>${esc(display(o))}</b><small>${CALL.outgoing ? 'Ça sonne…' : 'Connexion…'}</small></div>`); }
+    stage.append(t);
+  } else {
+    stage.classList.add('grid', 'n' + Math.min(n, 9));
+    [me, ...tiles].forEach((t) => stage.append(tileEl(t)));
+  }
+  // Boutons
+  const share = !!navigator.mediaDevices?.getDisplayMedia && !touchScreen();
+  const b = (k, ic, label, cls = '') => `<button type="button" data-cu="${k}" class="${cls}" aria-label="${label}"><span>${svg(ic)}</span>${label}</button>`;
+  $('#cuCtrls').innerHTML = b('mic', CALL.micOn ? CI.mic : CI.micoff, 'Micro', CALL.micOn ? '' : 'off') + b('cam', CALL.camOn ? CI.cam : CI.camoff, 'Caméra', CALL.camOn ? '' : 'off')
+    + (touchScreen() && CALL.camOn ? b('flip', CI.flip, 'Retourner') : '') + (share ? b('share', CI.screen, CALL.scr ? 'Arrêter' : 'Partager', CALL.scr ? 'on' : '') : '')
+    + b('react', CI.smile, 'Réagir', CALL.panel === 'react' ? 'on' : '') + (!CALL.dm ? b('hand', CI.hand, 'Main', CALL.hand ? 'on' : '') + b('ppl', CI.ppl, 'Membres', CALL.panel === 'ppl' ? 'on' : '') : '')
+    + b('hang', CI.hang, CALL.dm ? 'Raccrocher' : 'Quitter', 'hang');
+  const pn = $('#cuPanel');
+  pn.hidden = !CALL.panel;
+  pn.innerHTML = CALL.panel === 'react' ? `<div class="reacts">${REACTS.map((e) => `<button type="button" data-cu="r:${e}">${e}</button>`).join('')}</div>`
+    : CALL.panel === 'ppl' ? `<b>Dans l'appel (${n})</b>${[me, ...tiles].map((t) => `<div class="ppl"><span class="tav sm" style="--k:${grp(t.m?.group_id)?.color || 'var(--green)'}">${esc(initial(t.m))}</span><span>${esc(t.key === 'me' ? 'Vous' : display(t.m))}</span>${t.hand ? '✋' : ''}${svg(t.mic ? CI.mic : CI.micoff, 16)}</div>`).join('')}` : '';
+  paintClock(); watchVoices();
+}
+function paintClock() {
+  if (!CALL) return;
+  const t = CALL.since ? clock(Date.now() - CALL.since) : '';
+  const a = $('#cuTime'), p = $('#cuPill'); if (a) a.textContent = t; if (p) p.textContent = t ? `Appel · ${t}` : 'Appel en cours';
+}
+// Contour vert autour de celui qui parle
+function watchVoices() {
+  if (!CALL || CALL.vuTimer) return;
+  try { CALL.vu = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  CALL.meters = {};
+  CALL.vuTimer = setInterval(() => {
+    if (!CALL) return;
+    const list = [['me', CALL.mic && CALL.micOn ? new MediaStream([CALL.mic]) : null], ...[...CALL.peers.values()].map((p) => [p.pid, p.cam.getAudioTracks().length ? p.cam : null])];
+    for (const [id, s] of list) {
+      if (!s) continue;
+      let mt = CALL.meters[id];
+      if (!mt || mt.track !== s.getAudioTracks()[0]) {
+        try { const src = CALL.vu.createMediaStreamSource(s), an = CALL.vu.createAnalyser(); an.fftSize = 256; src.connect(an); mt = CALL.meters[id] = { an, buf: new Uint8Array(an.fftSize), track: s.getAudioTracks()[0] }; } catch (e) { continue; }
+      }
+      mt.an.getByteTimeDomainData(mt.buf);
+      let peak = 0; for (const v of mt.buf) peak = Math.max(peak, Math.abs(v - 128));
+      document.querySelectorAll(`#callui .tile[data-pid="${id}"]`).forEach((t) => t.classList.toggle('talk', peak > 12));
+    }
+  }, 250);
+}
+addEventListener('pagehide', () => { if (CALL) sb.rpc('call_leave', { p_call: CALL.id, p_end: false }); });
+
 /* ---------- Rendu ---------- */
 function render() {
   if (!S.session) { root.innerHTML = vAuth(); return; }
@@ -2997,6 +3492,9 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
   if (t.closest('[data-convinfo]')) { $('#msgIn')?.blur(); S.sheet = 'convinfo'; render(); return; }
   if (t.closest('[data-locsend]')) return sendLocation();
+  // Appels
+  const cl = t.closest('[data-call]'); if (cl) return callStart(cl.dataset.call);
+  const cj = t.closest('[data-calljoin]'); if (cj) return callJoin(cj.dataset.calljoin);
   // Assistant
   const aisg = t.closest('[data-aisugg]'); if (aisg) return aiSend(aisg.dataset.aisugg);
   if (t.closest('[data-ainew]')) { if (S.aiBusy) return; S.ai = []; aiSave(); return paintAi(); }
@@ -3262,7 +3760,7 @@ async function boot() {
   }
   if (!routed) route();
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
-  if (S.me) { loadOverview(); loadQuiz(); }
+  if (S.me) { loadOverview(); loadQuiz(); loadActiveCalls(); callsRealtime(); }
   if (S.view === 'assistant') loadAiQuota();
   if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
   render();
@@ -3280,7 +3778,7 @@ sb.auth.onAuthStateChange((event, session) => {
   if (event === 'PASSWORD_RECOVERY') { authMode = 'newpass'; S.session = session; render(); return; }
   const changed = (session?.user?.id || null) !== (S.session?.user?.id || null);
   S.session = session;
-  if (event === 'SIGNED_OUT') { clearSnap(); S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
+  if (event === 'SIGNED_OUT') { callHangup(false); stopRing(); if (callsCh) { sb.removeChannel(callsCh); callsCh = null; } clearSnap(); S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
   if (changed && session) setTimeout(boot, 0);
 });
 // Ouverture depuis une notification : #annonces ou #chat-<canal>
