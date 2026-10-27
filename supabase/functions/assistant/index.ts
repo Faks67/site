@@ -12,7 +12,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 
 const MODEL = (Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash').trim();
-const FALLBACK = 'gemini-flash-latest'; // si le modèle n'existe plus
+// Modèles de secours, essayés si le premier est surchargé chez Google (erreur 503) ou n'existe plus
+const FALLBACKS = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -52,23 +53,25 @@ type Msg = { role: 'user' | 'model'; text: string };
 // Réflexion réduite au minimum : la réponse commence bien plus vite.
 // Si le modèle refuse un réglage, on essaie le suivant (et on retient celui qui marche).
 const THINK: (Record<string, string> | null)[] = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
-let thinkOk = 0;
+const thinkOk: Record<string, number> = {};
+const busy = (st: number) => st === 503 || st === 500 || st === 429;
 async function gemini(key: string, contents: unknown, system: string) {
-  for (const model of [MODEL, FALLBACK]) {
-    for (let i = thinkOk; i < THINK.length; i++) {
+  let last = new Response('{}', { status: 404 });
+  for (const model of [MODEL, ...FALLBACKS.filter((m) => m !== MODEL)]) {
+    for (let i = thinkOk[model] || 0; i < THINK.length; i++) {
       const generationConfig = { temperature: 0.8, maxOutputTokens: 4096, ...(THINK[i] ? { thinkingConfig: THINK[i] } : {}) };
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig })
       });
-      if (r.status === 404) break; // modèle inconnu : on passe au suivant
       if (r.status === 400 && THINK[i]) { const t = await r.text(); if (/think/i.test(t)) continue; return new Response(t, { status: 400 }); }
-      if (r.ok) thinkOk = i;
+      if (r.ok) { thinkOk[model] = i; return r; }
+      if (r.status === 404 || busy(r.status)) { console.warn('Gemini', model, r.status, '→ modèle suivant'); await r.body?.cancel(); last = new Response('{}', { status: r.status }); break; }
       return r;
     }
   }
-  return new Response('{}', { status: 404 });
+  return last;
 }
 
 Deno.serve(async (req) => {
@@ -101,11 +104,12 @@ Deno.serve(async (req) => {
 
     const system = `${SYSTEM}\n\nDonnées de l'application au moment de la question :\nChef qui te parle : ${me.title || ''} ${me.first_name || ''}\n${context}`;
     const contents = msgs.map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
-    const r = await gemini(key, contents, system);
+    let r = await gemini(key, contents, system);
+    if (busy(r.status)) { await new Promise((ok) => setTimeout(ok, 1500)); r = await gemini(key, contents, system); } // Google surchargé : un nouvel essai
     if (!r.ok || !r.body) {
       await admin.rpc('ai_refund', { p_member: me.id });
       console.error('Gemini', r.status, (await r.text().catch(() => '')).slice(0, 500));
-      return json({ error: r.status === 429 ? 'gemini_occupe' : r.status === 400 || r.status === 403 ? 'cle_refusee' : `Gemini a répondu ${r.status}` }, r.status === 429 ? 429 : 502);
+      return json({ error: busy(r.status) ? 'gemini_occupe' : r.status === 400 || r.status === 403 ? 'cle_refusee' : `Gemini a répondu ${r.status}` }, r.status === 429 ? 429 : 502);
     }
     // Réponse en direct : une ligne JSON par morceau de texte, puis une ligne de fin
     const enc = new TextEncoder(), line = (o: unknown) => enc.encode(JSON.stringify(o) + '\n');
