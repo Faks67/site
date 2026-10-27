@@ -2967,9 +2967,11 @@ function paintCallJoin() { const b = $('#calljoin'); if (b) b.innerHTML = callJo
 const callBtnsHtml = (c) => (canCall(c.id) ? `<button class="callbtn" data-call="audio" aria-label="Appel audio">${svg(CI.phone, 20)}</button><button class="callbtn" data-call="video" aria-label="Appel vidéo">${svg(CI.cam, 20)}</button>` : '');
 
 // ---------- Micro et caméra ----------
+// Voix : annulation d'écho, réduction du bruit, volume automatique, isolation de la voix quand l'appareil sait le faire
+const AUDIO_OPTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: true, channelCount: 1, sampleRate: 48000 };
 const CAM_OPTS = (facing) => ({ facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } });
 async function callMedia(kind) {
-  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const audio = AUDIO_OPTS;
   try { return await navigator.mediaDevices.getUserMedia({ audio, video: kind === 'video' ? CAM_OPTS('user') : false }); }
   catch (e) {
     if (kind === 'video') { try { const s = await navigator.mediaDevices.getUserMedia({ audio }); toast('Caméra indisponible : appel en audio'); return s; } catch (e2) { /* ci-dessous */ } }
@@ -2977,16 +2979,24 @@ async function callMedia(kind) {
     return null;
   }
 }
-// Sonnerie (entrante) et tonalité d'attente (sortante), sans fichier son
+// Sonnerie (entrante) et tonalité d'attente (sortante) : un petit son fabriqué une fois, joué par un simple lecteur.
+// Pas de moteur audio (AudioContext) pendant un appel : sur iPhone, il dérègle l'annulation d'écho.
+const toneUrls = {};
+function toneUrl(kind) {
+  if (toneUrls[kind]) return toneUrls[kind];
+  const rate = 16000, on = kind === 'in' ? 0.8 : 1.4, total = kind === 'in' ? 2 : 4, f = kind === 'in' ? 660 : 425, vol = kind === 'in' ? 0.5 : 0.25;
+  const n = Math.round(rate * total), buf = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o, t) => [...t].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); buf.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+  buf.setUint32(24, rate, true); buf.setUint32(28, rate * 2, true); buf.setUint16(32, 2, true); buf.setUint16(34, 16, true); str(36, 'data'); buf.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const t = i / rate, env = t < on ? Math.min(1, t / 0.03, (on - t) / 0.03) : 0; buf.setInt16(44 + i * 2, Math.sin(2 * Math.PI * f * t) * env * vol * 32767, true); }
+  return (toneUrls[kind] = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+}
 function callTone(kind) {
-  try {
-    const ac = new (window.AudioContext || window.webkitAudioContext)(), g = ac.createGain(); g.gain.value = 0.0001; g.connect(ac.destination);
-    const o = ac.createOscillator(); o.frequency.value = kind === 'in' ? 660 : 425; o.connect(g); o.start();
-    const vol = kind === 'in' ? 0.22 : 0.08, len = kind === 'in' ? 0.8 : 1.4;
-    const beat = () => { const t = ac.currentTime; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.04); g.gain.setValueAtTime(vol, t + len); g.gain.linearRampToValueAtTime(0.0001, t + len + 0.05); if (kind === 'in') navigator.vibrate?.([400, 200, 400]); };
-    beat(); const iv = setInterval(beat, kind === 'in' ? 2000 : 4000);
-    return () => { clearInterval(iv); ac.close().catch(() => {}); navigator.vibrate?.(0); };
-  } catch (e) { return () => {}; }
+  const a = new Audio(toneUrl(kind)); a.loop = true; a.play().catch(() => {});
+  const vib = kind === 'in' ? setInterval(() => navigator.vibrate?.([400, 200, 400]), 2000) : null;
+  if (kind === 'in') navigator.vibrate?.([400, 200, 400]);
+  return () => { a.pause(); a.removeAttribute('src'); clearInterval(vib); navigator.vibrate?.(0); };
 }
 
 // ---------- Lancer, rejoindre, répondre ----------
@@ -3052,6 +3062,7 @@ function stopRing(msg) {
 // ---------- L'appel ----------
 function callEnter(call, media, ice, opt) {
   S.calls[call.id] = call;
+  if (recAC) { recAC.close().catch(() => {}); recAC = null; } // moteur audio des vocaux fermé : il gênerait l'annulation d'écho
   CALL = { id: call.id, channel: call.channel, kind: call.kind, dm: isDmId(call.channel), startedAt: Date.parse(call.started_at), since: null,
     pid: crypto.randomUUID(), ice, peers: new Map(), pres: {}, early: {}, outgoing: !!opt.outgoing, hadPeer: false,
     mic: media.getAudioTracks()[0] || null, cam: media.getVideoTracks()[0] || null, scr: null, scrA: null,
@@ -3116,12 +3127,22 @@ function connectPeer(pid, offerer) {
   };
   if (offerer) {
     CALL_SLOTS.forEach((k, i) => pc.addTransceiver(localTrack(i) || k, { direction: 'sendrecv' }));
-    (async () => { try { await pc.setLocalDescription(await pc.createOffer()); sig(pid, { sdp: pc.localDescription.toJSON() }); } catch (e) { console.error('offre', e); } })();
+    (async () => { try { await pc.setLocalDescription(tuneSdp(await pc.createOffer())); sig(pid, { sdp: pc.localDescription.toJSON() }); } catch (e) { console.error('offre', e); } })();
   }
   return p;
 }
+// Son en Opus « haute qualité voix » : 48 kbit/s, correction des paquets perdus, pas de coupure dans les silences
+function tuneSdp(d) {
+  const pt = /a=rtpmap:(\d+) opus\/48000/i.exec(d.sdp)?.[1]; if (!pt) return d;
+  const sdp = d.sdp.replace(new RegExp(`a=fmtp:${pt} ([^\r\n]*)`), (m, prm) => {
+    const o = Object.fromEntries(prm.split(';').filter(Boolean).map((x) => x.trim().split('=')));
+    Object.assign(o, { minptime: '10', useinbandfec: '1', usedtx: '0', maxaveragebitrate: '48000', stereo: '0', 'sprop-stereo': '0' });
+    return `a=fmtp:${pt} ` + Object.entries(o).map(([k, v]) => `${k}=${v}`).join(';');
+  });
+  return { type: d.type, sdp };
+}
 async function restartPeer(p) {
-  try { p.pc.restartIce?.(); await p.pc.setLocalDescription(await p.pc.createOffer({ iceRestart: true })); sig(p.pid, { sdp: p.pc.localDescription.toJSON() }); } catch (e) { console.error('relance', e); }
+  try { p.pc.restartIce?.(); await p.pc.setLocalDescription(tuneSdp(await p.pc.createOffer({ iceRestart: true }))); sig(p.pid, { sdp: p.pc.localDescription.toJSON() }); } catch (e) { console.error('relance', e); }
 }
 async function onSig(m) {
   if (!CALL || m.to !== CALL.pid) return;
@@ -3131,7 +3152,7 @@ async function onSig(m) {
       if (!p) p = connectPeer(m.from, false);
       await p.pc.setRemoteDescription(m.sdp);
       if (!p.ready) { p.pc.getTransceivers().forEach((t, i) => { t.direction = 'sendrecv'; t.sender.replaceTrack(localTrack(i)); }); p.ready = true; }
-      await p.pc.setLocalDescription(await p.pc.createAnswer());
+      await p.pc.setLocalDescription(tuneSdp(await p.pc.createAnswer()));
       sig(m.from, { sdp: p.pc.localDescription.toJSON() });
       for (const c of CALL.early[m.from] || []) await p.pc.addIceCandidate(c).catch(() => {});
       delete CALL.early[m.from];
@@ -3153,11 +3174,13 @@ function dropPeer(pid) {
 // Qualité d'image adaptée au nombre de personnes (chacun envoie son image à tous les autres)
 function tuneBitrates() {
   if (!CALL) return;
-  const n = CALL.peers.size, cam = n <= 1 ? 900e3 : n <= 3 ? 450e3 : 250e3, scr = n <= 3 ? 1500e3 : 800e3;
+  // Le son passe toujours en premier : l'image baisse avant lui quand la connexion faiblit
+  const n = CALL.peers.size, cam = n <= 1 ? 800e3 : n <= 3 ? 350e3 : 200e3, scr = n <= 3 ? 1500e3 : 800e3;
   CALL.peers.forEach((p) => p.pc.getTransceivers().forEach((t, i) => {
-    if (i !== 1 && i !== 2) return;
     const prm = t.sender.getParameters(); if (!prm.encodings?.length) prm.encodings = [{}];
-    prm.encodings[0].maxBitrate = i === 1 ? cam : scr;
+    const e = prm.encodings[0];
+    if (i === 0 || i === 3) { e.maxBitrate = i === 0 ? 64e3 : 128e3; e.priority = 'high'; e.networkPriority = 'high'; }
+    else { e.maxBitrate = i === 1 ? cam : scr; e.priority = 'low'; e.networkPriority = 'low'; if (i === 1) prm.degradationPreference = 'balanced'; }
     t.sender.setParameters(prm).catch(() => {});
   }));
 }
@@ -3169,7 +3192,6 @@ function callHangup(endForAll, msg) {
   if (endForAll && c.dm) c.ch.send({ type: 'broadcast', event: 'end', payload: {} });
   c.peers.forEach((p) => p.pc.close());
   [c.mic, c.cam, c.scr, c.scrA].forEach((t) => t?.stop());
-  c.vu?.close().catch(() => {});
   try { c.wake?.release(); } catch (e) { /* facultatif */ }
   setTimeout(() => sb.removeChannel(c.ch), 300);
   sb.rpc('call_leave', { p_call: c.id, p_end: !!(c.dm && endForAll) }).then(() => loadActiveCalls());
@@ -3205,7 +3227,7 @@ async function callShare() {
   if (CALL.scr) return stopShare();
   if (!navigator.mediaDevices.getDisplayMedia) return toast("Le partage d'écran se fait depuis un ordinateur.");
   try {
-    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, systemAudio: 'include', selfBrowserSurface: 'exclude', surfaceSwitching: 'include' });
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false, restrictOwnAudio: true }, systemAudio: 'include', windowAudio: 'system', selfBrowserSurface: 'exclude', surfaceSwitching: 'include' });
     if (!CALL) return s.getTracks().forEach((t) => t.stop());
     CALL.scr = s.getVideoTracks()[0]; CALL.scrA = s.getAudioTracks()[0] || null;
     CALL.scr.contentHint = 'detail';
@@ -3333,25 +3355,24 @@ function paintClock() {
   const t = CALL.since ? clock(Date.now() - CALL.since) : '';
   const a = $('#cuTime'), p = $('#cuPill'); if (a) a.textContent = t; if (p) p.textContent = t ? `Appel · ${t}` : 'Appel en cours';
 }
-// Contour vert autour de celui qui parle
+// Contour vert autour de celui qui parle : niveau sonore donné par la connexion elle-même (rien n'est rejoué ni analysé à part)
 function watchVoices() {
   if (!CALL || CALL.vuTimer) return;
-  try { CALL.vu = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
-  CALL.meters = {};
-  CALL.vuTimer = setInterval(() => {
+  CALL.vuTimer = setInterval(async () => {
     if (!CALL) return;
-    const list = [['me', CALL.mic && CALL.micOn ? new MediaStream([CALL.mic]) : null], ...[...CALL.peers.values()].map((p) => [p.pid, p.cam.getAudioTracks().length ? p.cam : null])];
-    for (const [id, s] of list) {
-      if (!s) continue;
-      let mt = CALL.meters[id];
-      if (!mt || mt.track !== s.getAudioTracks()[0]) {
-        try { const src = CALL.vu.createMediaStreamSource(s), an = CALL.vu.createAnalyser(); an.fftSize = 256; src.connect(an); mt = CALL.meters[id] = { an, buf: new Uint8Array(an.fftSize), track: s.getAudioTracks()[0] }; } catch (e) { continue; }
-      }
-      mt.an.getByteTimeDomainData(mt.buf);
-      let peak = 0; for (const v of mt.buf) peak = Math.max(peak, Math.abs(v - 128));
-      document.querySelectorAll(`#callui .tile[data-pid="${id}"]`).forEach((t) => t.classList.toggle('talk', peak > 12));
+    let mine = 0;
+    for (const p of CALL.peers.values()) {
+      let lvl = 0;
+      try {
+        (await p.pc.getStats()).forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'audio' && r.audioLevel != null) lvl = Math.max(lvl, r.audioLevel);
+          if (r.type === 'media-source' && r.kind === 'audio' && r.audioLevel != null) mine = Math.max(mine, r.audioLevel);
+        });
+      } catch (e) { continue; }
+      document.querySelectorAll(`#callui .tile[data-pid="${p.pid}"]`).forEach((t) => t.classList.toggle('talk', lvl > 0.04));
     }
-  }, 250);
+    document.querySelectorAll('#callui .tile[data-pid="me"]').forEach((t) => t.classList.toggle('talk', !!CALL?.micOn && mine > 0.04));
+  }, 400);
 }
 addEventListener('pagehide', () => { if (CALL) sb.rpc('call_leave', { p_call: CALL.id, p_end: false }); });
 
