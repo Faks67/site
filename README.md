@@ -198,6 +198,15 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - **Réunion en ligne** : dans un événement, « Où ? » → *Sur place* (lieu et adresse) ou *En ligne* : appel vidéo dans une conversation de l'appli, ou lien Zoom / Google Meet / Teams. Un bouton « Rejoindre » apparaît sur l'événement et sur l'accueil.
    - Formulaire : la date et l'heure de fin suivent automatiquement le début.
 
+## Mise à jour 25 : notifications d'appel et micro
+
+1. **Fonction `notify`** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts`, puis *Deploy*. Pas de nouveau script SQL.
+2. Dans le site :
+   - **Appels dans les notifications** : réglage « 📞 Appels » dans la cloche (activé par défaut). La notification d'appel part vers tous les chefs de la conversation, même si l'appli vient d'être fermée ou si le canal est en sourdine ; elle vibre longtemps, reste affichée, et a les boutons Répondre / Refuser (Android, ordinateur).
+   - Toucher la notification ouvre directement l'écran d'appel (Répondre / Rejoindre) tant que l'appel continue.
+   - Appel privé sans réponse : la notification devient « 📵 Appel manqué ».
+   - **Micro** : sur iPhone, le micro reste ouvert tant que la conversation est ouverte (plus de demande d'autorisation à chaque vocal), et l'appel réutilise ce micro. Il se ferme en quittant la conversation ou l'appli.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

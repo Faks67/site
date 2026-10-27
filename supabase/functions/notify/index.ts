@@ -202,6 +202,20 @@ Deno.serve(async (req) => {
     const keys = await vapidKeys(admin);
     if (body.action === 'key') return json({ publicKey: keys.publicKey });
 
+    // Appel privé sans réponse : la notification « Appel de… » devient « Appel manqué »
+    if (body.action === 'missed') {
+      const { data: c } = await admin.from('calls').select('*').eq('id', body.call_id).maybeSingle();
+      if (!c || c.started_by !== me.id || c.answered_at || !c.channel.startsWith('dm:')) return json({ sent: 0 });
+      const other = c.channel.split(':').slice(1, 3).find((id: string) => id !== me.id);
+      const { data: subs } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').eq('member_id', other);
+      webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
+      const sent = await sendAll(admin, subs || [], JSON.stringify({
+        title: `📵 Appel manqué`, body: `${me.title} ${me.first_name} a essayé de vous appeler · touchez pour rappeler`,
+        url: SITE_URL + '#chat-' + c.channel, tag: 'call-' + c.id, renotify: false
+      }), 3600);
+      return json({ sent });
+    }
+
     if (body.action === 'notify') {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.message_id).maybeSingle();
       if (!msg || msg.member_id !== me.id) return json({ error: 'message introuvable' }, 400);
@@ -212,8 +226,27 @@ Deno.serve(async (req) => {
       const text = msg.poll_options ? `📊 Sondage : ${msg.body}` : msg.body;
       const short = text.length > 180 ? text.slice(0, 177) + '…' : text;
 
-      // Chefs mentionnés (@Prénom) : prévenus même s'ils ne suivent pas ce canal, s'ils y ont accès
       const allowed = await allowedMembers(admin, msg.channel);
+      // Appel (mises à jour SQL 23 et 25) : tous ceux qui ont accès à la conversation, même si l'appli vient
+      // d'être fermée ou si le canal est en sourdine ; seulement « Appels » coupé dans les notifications l'empêche
+      if (msg.call_id) {
+        const video = msg.body.startsWith('📹');
+        const { data: prefs } = await admin.from('notif_prefs').select('member_id, channels');
+        const off = new Set((prefs || []).filter((x: { channels: string[] }) => (x.channels || []).includes('sans-appels')).map((x: { member_id: string }) => x.member_id));
+        const targets = [...allowed].filter((id) => id !== me.id && !off.has(id));
+        const { data: callSubs } = targets.length ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').in('member_id', targets) : { data: [] };
+        const sentCall = await sendAll(admin, callSubs || [], JSON.stringify({
+          title: `${video ? '📹' : '📞'} ${isDm ? `Appel de ${me.title} ${me.first_name}` : `Appel dans ${CHANNEL_NAMES[msg.channel] || msg.channel}`}`,
+          body: isDm ? `Appel ${video ? 'vidéo' : 'audio'} entrant · touchez pour répondre` : `${me.title} ${me.first_name} a lancé un appel ${video ? 'vidéo' : 'audio'} · touchez pour rejoindre`,
+          url: `${SITE_URL}?call=${msg.call_id}#chat-${msg.channel}`,
+          tag: 'call-' + msg.call_id,
+          renotify: true,
+          requireInteraction: true,
+          call: true
+        }), 60); // un appel qui sonne n'a plus de sens au bout d'une minute
+        return json({ sent: sentCall, total: (callSubs || []).length });
+      }
+      // Chefs mentionnés (@Prénom) : prévenus même s'ils ne suivent pas ce canal, s'ils y ont accès
       const tagged = new Set<string>((msg.mentions || []).filter((id: string) => id !== me.id && allowed.has(id)));
       let tagSubs: Sub[] = [];
       if (tagged.size) {
@@ -229,19 +262,6 @@ Deno.serve(async (req) => {
       } else subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
       const active = await activeMembers(admin);
       subs = subs.filter((s) => !active.has(s.member_id)); tagSubs = tagSubs.filter((s) => !active.has(s.member_id));
-      // Appel (mise à jour SQL 23) : « Appel de … », qui reste affiché jusqu'à ce qu'on le touche
-      if (msg.call_id) {
-        const video = msg.body.startsWith('📹');
-        const sentCall = await sendAll(admin, subs, JSON.stringify({
-          title: `${video ? '📹' : '📞'} ${isDm ? `Appel de ${me.title} ${me.first_name}` : `Appel dans ${CHANNEL_NAMES[msg.channel] || msg.channel}`}`,
-          body: isDm ? 'Touchez pour répondre' : `${me.title} ${me.first_name} a lancé un appel ${video ? 'vidéo' : 'audio'} · touchez pour rejoindre`,
-          url: SITE_URL + '#chat-' + msg.channel,
-          tag: 'call-' + msg.call_id,
-          renotify: true,
-          requireInteraction: true
-        }));
-        return json({ sent: sentCall, total: subs.length });
-      }
       const sent = await sendAll(admin, subs, JSON.stringify({
         title: isDm ? `💬 ${me.title} ${me.first_name}` : isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: short,
