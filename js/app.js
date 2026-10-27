@@ -1306,34 +1306,54 @@ function voiceHtml(m) {
   if (!m.attach_path) return attHtml(m);
   const on = S.voice?.path === m.attach_path && S.voice.playing;
   return `<div class="voice" data-voice="${esc(m.attach_path)}"><button type="button" class="vplay" data-vplay="${esc(m.attach_path)}" aria-label="${on ? 'Pause' : 'Écouter le message vocal'}">${on ? '❚❚' : '▶'}</button>
-    <span class="vwave">${voiceBars(m)}</span><span class="vdur">${fmtDur(m.attach_dur || 0)}</span></div>`;
+    <span class="vwave">${voiceBars(m)}</span><span class="vdur" data-dur="${fmtDur(m.attach_dur || 0)}">${fmtDur(m.attach_dur || 0)}</span></div>`;
 }
-const voicePlayer = new Audio();
-voicePlayer.preload = 'none';
-function stopVoice() { voicePlayer.pause(); S.voice = null; }
+// Un lecteur par vocal, préparé dès que le lien est connu : ▶ démarre sans attendre le téléchargement
+const voicePool = new Map(); // chemin -> { el, url }
+function voiceEl(path, url) {
+  let v = voicePool.get(path);
+  if (v && url && v.url !== url && v.el.readyState < 4) { v.el.src = url; v.url = url; } // lien renouvelé avant la fin du chargement
+  if (!v && url) {
+    const el = new Audio(); el.preload = 'auto'; el.src = url;
+    el.addEventListener('timeupdate', () => { if (S.voice?.el === el) paintVoice(); });
+    el.addEventListener('ended', () => { if (S.voice?.el === el) { S.voice = null; el.currentTime = 0; paintVoice(); } });
+    v = { el, url }; voicePool.set(path, v);
+    if (voicePool.size > 16) for (const [k, o] of voicePool) { if (S.voice?.el !== o.el && k !== path) { o.el.removeAttribute('src'); voicePool.delete(k); break; } }
+  }
+  return v?.el || null;
+}
+// Les derniers vocaux de la conversation sont préchargés (quelques centaines de Ko chacun)
+function prepVoices() {
+  [...document.querySelectorAll('[data-voice]')].slice(-8).forEach((x) => { const p = x.dataset.voice, u = attUrl(p); if (u) voiceEl(p, u); });
+}
+function stopVoice() { S.voice?.el?.pause(); S.voice = null; }
 async function playVoice(path) {
-  if (S.voice?.path === path) { if (voicePlayer.paused) { voicePlayer.play().catch(() => {}); S.voice.playing = true; } else { voicePlayer.pause(); S.voice.playing = false; } return paintVoice(); }
-  voicePlayer.pause(); S.voice = { path, playing: true }; paintVoice();
+  const cur = S.voice;
+  if (cur?.path === path && cur.el) { if (cur.el.paused) { cur.el.play().catch(() => {}); cur.playing = true; } else { cur.el.pause(); cur.playing = false; } return paintVoice(); }
+  cur?.el?.pause();
+  let el = voiceEl(path, attUrl(path));
+  S.voice = { path, playing: true, el }; paintVoice();
   try {
-    let url = attUrl(path);
-    if (!url) { url = (await b2Links([path]))[path]; if (url) S.attLinks[path] = { url, at: Date.now() }; }
-    if (!url) throw new Error('message vocal introuvable ou expiré');
-    if (S.voice?.path !== path) return;
-    voicePlayer.src = url; await voicePlayer.play();
-  } catch (e) { S.voice = null; paintVoice(); fail(e); }
+    if (!el) {
+      const url = (await b2Links([path]))[path]; if (!url) throw new Error('message vocal introuvable ou expiré');
+      S.attLinks[path] = { url, at: Date.now() };
+      if (S.voice?.path !== path) return;
+      el = S.voice.el = voiceEl(path, url);
+    }
+    await el.play();
+  } catch (e) { if (S.voice?.path === path) { S.voice = null; paintVoice(); } if (e.name !== 'AbortError') fail(e); }
 }
 // Avancement : les barres déjà écoutées se colorent, le temps défile
 function paintVoice() {
   document.querySelectorAll('.voice').forEach((v) => {
-    const cur = S.voice?.path === v.dataset.voice, b = v.querySelector('.vplay'), bars = v.querySelectorAll('.vwave i');
+    const cur = S.voice?.path === v.dataset.voice, el = cur ? S.voice.el : null, b = v.querySelector('.vplay'), bars = v.querySelectorAll('.vwave i'), d = v.querySelector('.vdur');
     b.textContent = cur && S.voice.playing ? '❚❚' : '▶';
-    const f = cur && voicePlayer.duration ? voicePlayer.currentTime / voicePlayer.duration : 0;
+    v.classList.toggle('loading', cur && S.voice.playing && (!el || el.readyState < 3));
+    const f = el?.duration && isFinite(el.duration) ? el.currentTime / el.duration : 0;
     bars.forEach((x, i) => x.classList.toggle('p', cur && i < Math.round(f * bars.length)));
-    if (cur && voicePlayer.duration) v.querySelector('.vdur').textContent = fmtDur(voicePlayer.currentTime);
+    d.textContent = cur && el && el.currentTime > 0 ? fmtDur(el.currentTime) : d.dataset.dur;
   });
 }
-voicePlayer.addEventListener('timeupdate', paintVoice);
-voicePlayer.addEventListener('ended', () => { const m = S.voice; S.voice = null; paintVoice(); if (m) { const v = document.querySelector(`.voice[data-voice="${CSS.escape(m.path)}"] .vdur`); const msg = Object.values(S.msgs).flat().find((x) => x.attach_path === m.path); if (v && msg) v.textContent = fmtDur(msg.attach_dur || 0); } });
 // Position partagée
 const locHtml = (m) => `<div class="loccard"><span class="locpin">${ico('pin')}</span><span class="locmain"><b>${esc(m.loc_label || 'Position partagée')}</b><small>${m.loc_lat.toFixed(4)}, ${m.loc_lng.toFixed(4)}</small>
   <span class="row">${placeLinks({ lat: m.loc_lat, lng: m.loc_lng })}</span></span></div>`;
@@ -1361,6 +1381,7 @@ async function fillAttLinks() {
   } catch (e) { /* aperçus facultatifs */ } finally { attFilling = false; }
   const box = $('#msgs'), near = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   document.querySelectorAll('[data-attsrc]').forEach((el) => { const u = attUrl(el.dataset.attsrc); if (u && !el.getAttribute('src')) el.setAttribute('src', u); });
+  prepVoices();
   if (box && near) box.scrollTop = box.scrollHeight;
 }
 async function openAtt(path) {
@@ -1444,40 +1465,57 @@ function openSharedEvent(id) {
   go('calendrier'); S.calSel = S.calDate = o.start; S.evModal = { mode: 'view', occ: o }; render();
 }
 
-/* ---------- Messages vocaux : maintenir le micro, glisser à gauche pour annuler, vers le haut pour verrouiller ---------- */
+/* ---------- Messages vocaux ----------
+   Maintenir le micro : ça enregistre, relâcher envoie, glisser à gauche supprime, glisser vers le haut bloque.
+   Toucher simplement le micro : enregistrement « mains libres » avec Supprimer / Arrêter pour réécouter / Envoyer. */
 const REC_MAX = 300;
+const MIC_OPTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 };
 function recMime() {
   for (const t of ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
   return '';
 }
 // Un seul « analyseur » audio, créé au premier appui puis réutilisé (pas d'attente aux appuis suivants)
 let recAC = null;
+// Après un vocal, le micro reste prêt 20 secondes : le suivant démarre instantanément
+let micWarm = null;
+function takeMic() {
+  const w = micWarm; micWarm = null; if (!w) return null;
+  clearTimeout(w.t);
+  return w.stream.getAudioTracks().some((t) => t.readyState === 'live') ? w.stream : null;
+}
+function keepMic(stream) { if (!stream) return; releaseMic(); micWarm = { stream, t: setTimeout(releaseMic, 20000) }; }
+function releaseMic() { if (!micWarm) return; clearTimeout(micWarm.t); micWarm.stream.getTracks().forEach((t) => t.stop()); micWarm = null; }
+document.addEventListener('visibilitychange', () => { if (document.hidden && !S.rec) releaseMic(); });
+const recCls = (...c) => { const f = $('#compose'); if (f) { f.classList.remove('recording', 'locked', 'arming', 'review', 'willcancel'); f.classList.add(...c); } };
 async function startRec(e, btn) {
   if (S.rec) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("L'enregistrement vocal n'est pas possible sur cet appareil.");
+  discardReview();
   const r = S.rec = { x0: e.clientX, y0: e.clientY, p0: Date.now(), t0: 0, locked: false, up: false, chunks: [], peaks: [], pointer: e.pointerId };
   try { btn.setPointerCapture(e.pointerId); } catch (err) { /* facultatif */ }
-  // Réaction immédiate : la barre rouge s'affiche avant même que le micro soit ouvert
   togglePlus(false); closePicker(); $('#msgIn')?.blur();
-  const f = $('#compose'); f?.classList.add('recording'); sendTyping(true, 'rec');
+  recCls('recording', 'arming'); sendTyping(true, 'rec');
   const t = $('#recTime'), w = $('#recWave'); if (t) t.textContent = '0:00'; if (w) w.innerHTML = '';
-  navigator.vibrate?.(15);
+  navigator.vibrate?.(8);
   try { const AC = window.AudioContext || window.webkitAudioContext; recAC = recAC || new AC(); recAC.resume?.().catch(() => {}); } catch (err) { recAC = null; }
   r.tick = setInterval(recTick, 100);
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch (err) { if (S.rec === r) cancelRec(); return toast(err.name === 'NotAllowedError' ? 'Autorisez le micro pour envoyer un message vocal.' : 'Micro indisponible.'); }
-  if (S.rec !== r) { stream.getTracks().forEach((x) => x.stop()); return; }
+  let stream = takeMic();
+  if (!stream) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_OPTS }); }
+    catch (err) { if (S.rec === r) cancelRec(); return toast(err.name === 'NotAllowedError' ? 'Autorisez le micro pour envoyer un message vocal.' : 'Micro indisponible.'); }
+  }
+  if (S.rec !== r) return keepMic(stream);
   r.stream = stream;
-  // Bouton relâché pendant que le téléphone demandait l'accès au micro (première fois) : on n'enregistre pas
-  if (r.up && !r.locked) { cancelRec(); return toast('Micro autorisé : maintenez le bouton pour enregistrer, relâchez pour envoyer.'); }
   const mime = recMime();
-  try { r.rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined); }
+  try { r.rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 64000 }); }
   catch (err) { r.rec = new MediaRecorder(stream); }
   r.rec.ondataavailable = (ev) => { if (ev.data.size) r.chunks.push(ev.data); };
   r.rec.start(250);
   try { r.src = recAC.createMediaStreamSource(stream); r.an = recAC.createAnalyser(); r.an.fftSize = 512; r.src.connect(r.an); r.buf = new Uint8Array(r.an.fftSize); } catch (err) { /* forme de la voix facultative */ }
   r.t0 = Date.now();
+  // Le point devient rouge et le téléphone vibre : on peut parler
+  $('#compose')?.classList.remove('arming'); navigator.vibrate?.(25);
+  if (r.locked && r.firstTime) toast('Enregistrement en cours : ➤ pour envoyer, 🗑 pour supprimer.');
 }
 function recTick() {
   const r = S.rec; if (!r?.t0) return;
@@ -1492,26 +1530,61 @@ function recTick() {
 }
 function endRec(r) {
   clearInterval(r.tick); sendTyping(false);
-  r.stream?.getTracks().forEach((x) => x.stop());
   try { r.src?.disconnect(); } catch (err) { /* déjà débranché */ }
-  $('#compose')?.classList.remove('recording', 'locked');
+  keepMic(r.stream);
+  $('#compose')?.style.removeProperty('--slide');
 }
-function cancelRec() {
+function lockRec(r) { r.locked = true; recCls('recording', 'locked', ...(r.t0 ? [] : ['arming'])); navigator.vibrate?.(12); }
+function cancelRec(msg) {
   const r = S.rec; if (!r) return;
   S.rec = null;
   if (r.rec && r.rec.state !== 'inactive') { r.rec.onstop = null; r.rec.stop(); }
-  endRec(r);
+  endRec(r); recCls();
+  if (msg) { navigator.vibrate?.(30); toast('🗑 Vocal supprimé'); }
 }
+// send : envoyer tout de suite ; sinon : arrêter pour réécouter avant d'envoyer
 function stopRec(send) {
   const r = S.rec; if (!r?.rec) return cancelRec();
   S.rec = null;
   const dur = (Date.now() - r.t0) / 1000;
-  r.rec.onstop = () => { endRec(r); if (send) sendVoice(new Blob(r.chunks, { type: r.rec.mimeType || 'audio/webm' }), dur, r.peaks); };
-  r.rec.stop(); clearInterval(r.tick);
-  $('#compose')?.classList.remove('recording', 'locked');
+  r.rec.onstop = () => {
+    endRec(r);
+    const blob = new Blob(r.chunks, { type: r.rec.mimeType || 'audio/webm' });
+    if (send) { recCls(); sendVoice(blob, dur, r.peaks); }
+    else { S.recReview = { blob, dur, peaks: r.peaks, url: URL.createObjectURL(blob) }; paintReview(); }
+  };
+  clearInterval(r.tick);
+  r.rec.stop();
+  if (send) recCls();
 }
+// Réécoute avant d'envoyer
+const reviewPlayer = new Audio();
+reviewPlayer.addEventListener('ended', () => paintReview());
+reviewPlayer.addEventListener('timeupdate', () => { const t = $('#rvTime'); if (t && S.recReview) t.textContent = fmtDur(Math.floor(reviewPlayer.currentTime)); });
+function reviewBars(peaks) { const n = 28, step = Math.max(1, peaks.length / n), top = Math.max(...peaks, 0.01); return Array.from({ length: Math.min(n, peaks.length) }, (_, i) => { const part = peaks.slice(Math.floor(i * step), Math.floor((i + 1) * step)); const v = part.reduce((a, b) => a + b, 0) / (part.length || 1); return `<i style="height:${Math.max(12, (v / top) * 100)}%"></i>`; }).join(''); }
+function paintReview() {
+  const v = S.recReview, f = $('#compose');
+  if (!v) { f?.classList.remove('review'); return; }
+  recCls('review');
+  const w = $('#rvWave'), t = $('#rvTime'), b = $('[data-recplay]');
+  if (w) w.innerHTML = reviewBars(v.peaks);
+  if (t) t.textContent = fmtDur(Math.round(v.dur));
+  if (b) b.textContent = reviewPlayer.paused ? '▶' : '❚❚';
+}
+function toggleReview() {
+  const v = S.recReview; if (!v) return;
+  if (reviewPlayer.paused) { if (reviewPlayer.src !== v.url) reviewPlayer.src = v.url; reviewPlayer.play().catch(() => {}); } else reviewPlayer.pause();
+  paintReview();
+}
+function discardReview(msg) {
+  const v = S.recReview; if (!v) return;
+  reviewPlayer.pause(); reviewPlayer.removeAttribute('src');
+  URL.revokeObjectURL(v.url); S.recReview = null; recCls();
+  if (msg) { navigator.vibrate?.(30); toast('🗑 Vocal supprimé'); }
+}
+function sendReview() { const v = S.recReview; if (!v) return; reviewPlayer.pause(); S.recReview = null; recCls(); sendVoice(v.blob, v.dur, v.peaks); }
 async function sendVoice(blob, dur, levels) {
-  if (blob.size < 800) return toast('Message vocal vide, réessayez.');
+  if (blob.size < 800 || dur < 0.5) return toast('Message vocal trop court, réessayez.');
   const type = blob.type.split(';')[0] || 'audio/webm', ext = /mp4|aac/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : 'webm';
   // Forme de la voix : 40 barres de 10 à 100
   const n = 40, step = Math.max(1, levels.length / n), raw = [];
@@ -1524,6 +1597,7 @@ async function sendVoice(blob, dur, levels) {
   try {
     const up = await filesFn(`?action=upload&name=vocal.${ext}`, new File([blob], `vocal.${ext}`, { type }), type);
     keepLocal(local, up.path); tmp.uploading = false;
+    if (voicePool.has(local)) voicePool.set(up.path, voicePool.get(local)); // le lecteur déjà prêt reste le même
     if (S.voice?.path === local) S.voice.path = up.path; // la lecture en cours continue
     const ok = await sendMessage({ ...row, attach_path: up.path, attach_size: up.size }, tmp);
     if (!ok) await removeFile(up.path);
@@ -1531,18 +1605,20 @@ async function sendVoice(blob, dur, levels) {
 }
 root.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-mic]'); if (!b || e.button > 0) return; e.preventDefault(); startRec(e, b); });
 root.addEventListener('pointermove', (e) => {
-  const r = S.rec; if (!r || r.locked || e.pointerId !== r.pointer) return;
+  const r = S.rec; if (!r || r.locked || r.up || e.pointerId !== r.pointer) return;
   const dx = e.clientX - r.x0, dy = e.clientY - r.y0, f = $('#compose');
-  if (dx < -90) { cancelRec(); navigator.vibrate?.(30); return toast('Message vocal annulé'); }
-  if (dy < -70) { r.locked = true; f?.classList.add('locked'); navigator.vibrate?.(15); return; }
+  if (dx < -110) return cancelRec(true);
+  if (dy < -70) return lockRec(r);
   f?.style.setProperty('--slide', Math.min(0, dx) + 'px');
+  f?.classList.toggle('willcancel', dx < -60);
 });
 const recRelease = (e) => {
-  const r = S.rec; if (!r || e.pointerId !== r.pointer) return;
-  r.up = true; $('#compose')?.style.removeProperty('--slide');
+  const r = S.rec; if (!r || r.up || e.pointerId !== r.pointer) return;
+  r.up = true; const f = $('#compose'); f?.style.removeProperty('--slide'); f?.classList.remove('willcancel');
   if (r.locked) return;
-  if (Date.now() - r.p0 < 500) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
-  if (r.t0) stopRec(true); // sinon : le micro s'ouvre encore, startRec annulera
+  // Simple toucher (ou micro pas encore prêt) : on continue en « mains libres » au lieu d'annuler
+  if (Date.now() - r.p0 < 350 || !r.t0 || Date.now() - r.t0 < 600) { r.firstTime = !r.t0; return lockRec(r); }
+  stopRec(true);
 };
 root.addEventListener('pointerup', recRelease);
 root.addEventListener('pointercancel', recRelease);
@@ -1900,6 +1976,7 @@ function openConv(id) {
 }
 function closeConv() {
   if (S.rec) cancelRec();
+  discardReview();
   if (S.typingSent) sendTyping(false);
   S.chan = null; S.replyTo = null; S.plusOpen = false; closePicker(); stopVoice();
   try { history.replaceState(null, '', '#discussion'); } catch (e) {}
@@ -1940,12 +2017,15 @@ const PLUS_OPTS = [['media', 'Photo / vidéo', 'image', 'var(--c-purple)'], ['ca
 const plusMenuHtml = () => `<div class="plusgrid">${PLUS_OPTS.map(([k, l, i, c]) => `<button type="button" data-plusopt="${k}"><span style="--k:${c}">${ico(i)}</span>${l}</button>`).join('')}</div>`;
 // Barre d'écriture : « + » à gauche, champ avec GIF à l'intérieur, micro à droite (flèche d'envoi dès qu'on écrit)
 function composeHtml(c) {
-  return `<form class="compose${S.rec ? ' recording' + (S.rec.locked ? ' locked' : '') : ''}" id="compose">
+  return `<form class="compose${S.rec ? ' recording' + (S.rec.locked ? ' locked' : '') + (S.rec.t0 ? '' : ' arming') : ''}${S.recReview ? ' review' : ''}" id="compose">
     <button type="button" class="cbtn plus${S.plusOpen ? ' open' : ''}" data-plus aria-label="Joindre : photo, document, sondage…" aria-expanded="${!!S.plusOpen}">${ico('plus')}</button>
     <div class="cfield"><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Message'}" aria-label="Message" maxlength="4000"></textarea>
       <button type="button" class="gifin" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button></div>
-    <div class="recbar" aria-live="polite"><button type="button" class="cbtn trash" data-reccancel aria-label="Annuler l'enregistrement">${ico('trash')}</button>
-      <span class="recpill"><i class="recdot"></i><b id="recTime">0:00</b><span class="recwave" id="recWave"></span><small class="rechint">◀ glisser pour annuler</small></span></div>
+    <div class="recbar" aria-live="polite"><button type="button" class="cbtn trash" data-reccancel aria-label="Supprimer le vocal">${ico('trash')}</button>
+      <span class="recpill"><i class="recdot"></i><b id="recTime">0:00</b><small class="recprep">Micro…</small><span class="recwave" id="recWave"></span><small class="rechint"><span class="arr">‹</span> Glisser pour supprimer</small></span>
+      <button type="button" class="cbtn recstop" data-recstop aria-label="Arrêter pour réécouter"><i></i></button></div>
+    <div class="recreview"><button type="button" class="cbtn trash" data-recdiscard aria-label="Supprimer le vocal">${ico('trash')}</button>
+      <span class="recpill rv"><button type="button" class="vplay" data-recplay aria-label="Réécouter">▶</button><span class="recwave" id="rvWave">${S.recReview ? reviewBars(S.recReview.peaks) : ''}</span><b id="rvTime">${S.recReview ? fmtDur(Math.round(S.recReview.dur)) : '0:00'}</b></span></div>
     <button type="button" class="cbtn mic" data-mic aria-label="Maintenir pour enregistrer un message vocal">${ico('mic')}</button>
     <button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button>
     <span class="reclock" aria-hidden="true">${ico('lock', 16)}<i>▲</i></span>
@@ -3146,6 +3226,7 @@ function stopRing(msg) {
 // ---------- L'appel ----------
 function callEnter(call, media, ice, opt) {
   S.calls[call.id] = call;
+  releaseMic();
   if (recAC) { recAC.close().catch(() => {}); recAC = null; } // moteur audio des vocaux fermé : il gênerait l'annulation d'écho
   CALL = { id: call.id, channel: call.channel, kind: call.kind, dm: isDmId(call.channel), startedAt: Date.parse(call.started_at), since: null,
     pid: crypto.randomUUID(), ice, peers: new Map(), pres: {}, early: {}, outgoing: !!opt.outgoing, hadPeer: false,
@@ -3626,7 +3707,10 @@ root.addEventListener('click', async (e) => {
   const evs = t.closest('[data-evshare]'); if (evs) { S.sheet = null; render(); return shareEvent(evs.dataset.evshare); }
   const evo = t.closest('[data-evopen]'); if (evo) return openSharedEvent(evo.dataset.evopen);
   const vpl = t.closest('[data-vplay]'); if (vpl) return playVoice(vpl.dataset.vplay);
-  if (t.closest('[data-reccancel]')) return cancelRec();
+  if (t.closest('[data-reccancel]')) return cancelRec(true);
+  if (t.closest('[data-recstop]')) return stopRec(false);
+  if (t.closest('[data-recdiscard]')) return discardReview(true);
+  if (t.closest('[data-recplay]')) return toggleReview();
   if (t.closest('[data-mic]')) return; // l'enregistrement se fait en maintenant le bouton (voir plus bas)
   const o = t.closest('[data-open]'); if (o) return openDoc(o.dataset.open);
   const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
@@ -3751,6 +3835,7 @@ root.addEventListener('submit', async (e) => {
   if (id === 'compose') {
     e.preventDefault();
     if (S.rec) return stopRec(true); // vocal verrouillé : la flèche l'envoie
+    if (S.recReview) return sendReview(); // vocal réécouté : la flèche l'envoie
     const v = $('#msgIn').value.trim(); if (!v) return;
     $('#msgIn').value = ''; growMsg(); syncCompose(); S.mention = null; paintMentions(); sendTyping(false);
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }

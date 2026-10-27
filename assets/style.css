@@ -1379,3 +1379,25 @@ button,a,label,[role="button"],.convrow{-webkit-tap-highlight-color:transparent;
   .calfab:active{transform:scale(.94)}
   .calview .daypanel,.calview .planning{padding-bottom:70px}
 }
+
+/* ---------- Vocaux : micro qui s'ouvre, mains libres, réécoute ---------- */
+.recstop,.recreview,.recprep{display:none}
+.compose.recording .mic{transition:transform .12s ease,background-color .12s ease}
+.compose.arming .recdot{background:var(--muted);animation:none}
+.compose.arming .recprep{display:inline;font-weight:700;color:var(--muted)}
+.compose.arming .recpill b{display:none}
+.compose.arming .mic{background:var(--muted)}
+.rechint .arr{display:inline-block;animation:recarr 1s ease-in-out infinite}
+@keyframes recarr{50%{transform:translateX(-4px)}}
+.recpill{transition:transform .05s linear}
+.compose.willcancel .recpill{background:var(--c-red);color:#fff;border-color:var(--c-red)}
+.compose.willcancel .rechint{color:#fff}
+.compose.recording.locked .recstop{display:grid;background:color-mix(in srgb,var(--c-red) 12%,var(--surface))}
+.recstop i{width:14px;height:14px;border-radius:3px;background:var(--c-red)}
+.compose.recording.locked .cbtn.trash,.compose.review .cbtn.trash{visibility:visible;display:grid;color:var(--c-red);background:color-mix(in srgb,var(--c-red) 12%,var(--surface))}
+.compose.review .plus,.compose.review .cfield,.compose.review .mic,.compose.review .recbar{display:none}
+.compose.review .recreview{display:flex;flex:1;min-width:0;align-items:center;gap:6px}
+.compose.review .send{display:grid}
+.recpill.rv{background:var(--surface-2);border-color:var(--line);color:var(--green-ink);padding-left:4px}
+.recpill.rv .vplay{width:34px;height:34px}
+.voice.loading .vplay{animation:pulse .6s ease-in-out infinite alternate}
