@@ -187,6 +187,17 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - Historique dans la conversation : appel vidéo/audio et durée, « Appel manqué · Rappeler », « Sans réponse ».
    - Les images et le son passent directement d'un appareil à l'autre (WebRTC, chiffré) : rien n'est enregistré, la base ne garde que l'heure et la durée.
 
+## Mise à jour 24 : calendrier plus fluide et réunions en ligne
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/24-reunions-en-ligne.sql` et cliquer sur *Run*.
+2. Dans le site :
+   - **Vue Mois réparée** : les jours sont de nouveau bien alignés sous leur jour de la semaine (une règle de l'administration écrasait la grille).
+   - **Navigation fluide** : seul le calendrier se redessine (avec un léger glissement), glisser à gauche / à droite sur téléphone pour changer de période, flèches ← → et touche T sur ordinateur ; l'affichage choisi est retenu.
+   - **Nouvelle vue « Planning »** : les 30 prochains jours en liste (lieu ou visio, nombre d'absents), idéale sur téléphone.
+   - **Barre compacte** sur téléphone, bouton rond « + » pour ajouter un événement ; en Mois, toucher deux fois un jour ouvre la vue Jour ; en Jour / Semaine, le calendrier s'ouvre sur l'heure actuelle.
+   - **Réunion en ligne** : dans un événement, « Où ? » → *Sur place* (lieu et adresse) ou *En ligne* : appel vidéo dans une conversation de l'appli, ou lien Zoom / Google Meet / Teams. Un bouton « Rejoindre » apparaît sur l'événement et sur l'accueil.
+   - Formulaire : la date et l'heure de fin suivent automatiquement le début.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

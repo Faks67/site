@@ -68,7 +68,7 @@ const S = {
   view: 'accueil', poleTab: 'peda', libCat: 'all', libQ: '', upPole: '', chan: 'annonces',
   reacts: {}, reactPicker: null, emojiOpen: false, push: 'inconnu',
   uploading: '', realtime: null,
-  calView: 'mois', calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
+  calView: (() => { try { return ['liste', 'jour', 'semaine', 'mois', 'annee'].includes(localStorage.getItem('tdi-calview')) ? localStorage.getItem('tdi-calview') : 'mois'; } catch (e) { return 'mois'; } })(), calDate: '', calSel: '', evModal: null, calScroll: null, moreOpen: false,
   mapGroups: [], mapPeriod: 90, mapState: null, mapFocus: null,
   vitrine: null, vitrineBusy: false,
   reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false,
@@ -734,7 +734,7 @@ function presRow(o) {
   const abs = isAbsent(o, S.me.id), others = absentsOf(o).filter((m) => m.id !== S.me.id), p = parseD(o.start);
   return `<div class="card presrow${abs ? ' off' : ''}" style="--k:${evColor(o.e)}">
     <div class="pdate"><b>${p.getDate()}</b><small>${esc(p.toLocaleDateString('fr-FR', { month: 'short' }))}</small></div>
-    <div class="pinfo"><b>${esc(o.e.title)}</b><small>${esc(cap(p.toLocaleDateString('fr-FR', { weekday: 'long' })))}${isTimed(o) ? ' · ' + fmtHM(o.e.start_time) : ''}${o.e.location ? ' · ' + esc(o.e.location) : ''}</small>
+    <div class="pinfo"><b>${esc(o.e.title)}</b><small>${esc(cap(p.toLocaleDateString('fr-FR', { weekday: 'long' })))}${isTimed(o) ? ' · ' + fmtHM(o.e.start_time) : ''}${evPlace(o.e) ? ' · ' + esc(evPlace(o.e)) : ''}</small>
       ${others.length ? `<small class="pabs">Absent${others.length > 1 ? 's' : ''} : ${others.map((m) => esc(display(m))).join(', ')}</small>` : ''}</div>
     <div class="seg" role="group" aria-label="Ma présence le ${esc(fmtLong(o.start))}"><button ${absAttrs(o, S.me.id, false)} aria-pressed="${!abs}">Présent·e</button><button class="no" ${absAttrs(o, S.me.id, true)} aria-pressed="${abs}">Absent·e</button></div>
   </div>`;
@@ -783,7 +783,7 @@ function vAccueil() {
       ${S.vitrine ? `<figure class="vitrine"><span class="vglow"></span><img src="${esc(S.vitrine.url)}" alt="Des enfants de l'unité fiers de leur plaque de cookies"></figure>` : '<img class="hands" src="assets/logo.png" alt="">'}
     </div>
     <div class="card next"><span class="eyebrow">Prochain rendez-vous</span>
-      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}${presenceCtl(o)}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
+      ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${evPlace(ev) ? ' · ' + esc(evPlace(ev)) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}${ev.online ? `<div class="row">${joinBtn(ev, 'btn primary small')}</div>` : ''}${presenceCtl(o)}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
     </div>
   </div>
   ${quizCard()}
@@ -966,7 +966,24 @@ const EV_CATS = [
 ];
 const REPEATS = { none: 'Ne se répète pas', weekly: 'Chaque semaine', biweekly: 'Toutes les 2 semaines', monthly: 'Chaque mois' };
 const evColor = (e) => (EV_CATS.find((c) => c[0] === e.category) || EV_CATS[0])[2];
-const CAL_VIEWS = [['jour', 'Jour'], ['semaine', 'Semaine'], ['mois', 'Mois'], ['annee', 'Année']];
+// Réunion en ligne (mise à jour SQL 24) : appel vidéo dans une conversation de l'appli, ou lien (Zoom, Meet, Teams…)
+const urlHost = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
+const VISIO = [['meet.google.com', 'Google Meet'], ['zoom.us', 'Zoom'], ['teams.microsoft.com', 'Teams'], ['teams.live.com', 'Teams'], ['whereby.com', 'Whereby'], ['meet.jit.si', 'Jitsi']];
+const visioName = (u) => { const h = urlHost(u); return (VISIO.find(([d]) => h === d || h.endsWith('.' + d)) || [0, h || 'lien'])[1]; };
+const onlineTxt = (e) => (e.online_kind === 'link' ? `En ligne · ${visioName(e.online_url)}` : `En ligne · appel ${e.online_channel ? 'dans « ' + convOf(e.online_channel).name + ' »' : "dans l'appli"}`);
+const evPlace = (e) => (e.online ? '💻 ' + onlineTxt(e) : e.location || '');
+function evJoin(id) {
+  const e = S.events.find((x) => String(x.id) === String(id)); if (!e?.online) return;
+  if (e.online_kind === 'link') { if (/^https:\/\//i.test(e.online_url || '')) window.open(e.online_url, '_blank', 'noopener'); return; }
+  const ch = e.online_channel || 'general';
+  if (!seesChan(S.me, ch)) return toast("Vous n'avez pas accès à cette conversation.");
+  S.evModal = null; go('discussion'); openConv(ch);
+  const live = S.activeCalls[ch];
+  return callLive(live) ? callJoin(live.id) : callStart('video');
+}
+const joinBtn = (e, cls = 'btn primary') => (e.online ? `<button class="${cls} evjoin" data-evjoin="${e.id}">${e.online_kind === 'link' ? '🔗' : '📹'} Rejoindre</button>` : '');
+const CAL_VIEWS = [['liste', 'Planning'], ['jour', 'Jour'], ['semaine', 'Semaine'], ['mois', 'Mois'], ['annee', 'Année']];
+const LIST_DAYS = 30;
 const HOUR_H = 48;
 const fmtHM = (t) => (t ? t.slice(0, 5).replace(':', 'h') : '');
 const toMin = (t) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
@@ -1006,16 +1023,20 @@ function occWhen(o) {
 }
 function calTitle() {
   const d = S.calDate, v = S.calView;
-  if (v === 'jour') return fmtLong(d);
+  if (v === 'jour') return narrow() ? cap(parseD(d).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })) : fmtLong(d);
   if (v === 'annee') return d.slice(0, 4);
+  if (v === 'liste') return d === today() ? 'À venir' : 'À partir du ' + parseD(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
   if (v === 'mois') return cap(parseD(d).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
   const a = startOfWeek(d), b = addDays(a, 6), pa = parseD(a), pb = parseD(b);
-  if (pa.getMonth() === pb.getMonth()) return `${pa.getDate()} – ${pb.getDate()} ${pb.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}`;
+  if (pa.getMonth() === pb.getMonth()) return `${pa.getDate()} – ${pb.getDate()} ${pb.toLocaleDateString('fr-FR', narrow() ? { month: 'short' } : { month: 'long', year: 'numeric' })}`;
+  if (narrow()) return `${pa.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} – ${pb.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
   return `${pa.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} – ${pb.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 function calMove(n) {
   const v = S.calView, d = parseD(S.calDate);
+  S.calScroll = null;
   if (v === 'jour') S.calDate = addDays(S.calDate, n);
+  else if (v === 'liste') S.calDate = addDays(S.calDate, LIST_DAYS * n);
   else if (v === 'semaine') S.calDate = addDays(S.calDate, 7 * n);
   else if (v === 'mois') S.calDate = isoD(new Date(d.getFullYear(), d.getMonth() + n, 1));
   else S.calDate = isoD(new Date(d.getFullYear() + n, 0, 1));
@@ -1029,7 +1050,7 @@ const chip = (o, day) => {
 function dayList(list, day) {
   const items = occOn(list, day);
   return `<div class="card daypanel"><div class="row" style="justify-content:space-between"><h3>${esc(fmtLong(day, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>${can('calendrier') ? `<button class="btn small" data-evnew="${day}">+ Ajouter</button>` : ''}</div>
-    ${items.length ? `<div class="agenda">${items.map((o) => `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${o.e.location || o.e.address ? `<small>${esc(o.e.location || o.e.address)}</small>` : ''}</span></button>`).join('')}</div>` : '<p style="color:var(--muted)">Rien de prévu ce jour-là.</p>'}</div>`;
+    ${items.length ? `<div class="agenda">${items.map((o) => `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${evPlace(o.e) || o.e.address ? `<small>${esc(evPlace(o.e) || o.e.address)}</small>` : ''}</span></button>`).join('')}</div>` : '<p class="hint">Rien de prévu ce jour-là.</p>'}</div>`;
 }
 function vMonth() {
   const d = parseD(S.calDate), first = isoD(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -1042,7 +1063,7 @@ function vMonth() {
     cells += `<div class="mcell${out ? ' out' : ''}${day === td ? ' today' : ''}${day === sel ? ' sel' : ''}" data-calday="${day}"><span class="num">${parseD(day).getDate()}</span>
       <div class="mchips">${items.slice(0, 3).map((o) => chip(o, day)).join('')}${items.length > 3 ? `<span class="more">+${items.length - 3}</span>` : ''}</div></div>`;
   }
-  return `<div class="card mgrid-wrap"><div class="mhead">${['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].map((x) => `<span>${x}</span>`).join('')}</div><div class="mgrid">${cells}</div></div>${dayList(list, sel)}`;
+  return `<div class="card mgrid-wrap"><div class="cmhead">${['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'].map((x) => `<span>${x}</span>`).join('')}</div><div class="cmgrid">${cells}</div></div>${dayList(list, sel)}`;
 }
 function vTimeGrid(nDays) {
   const start = nDays === 1 ? S.calDate : startOfWeek(S.calDate), days = Array.from({ length: nDays }, (_, i) => addDays(start, i));
@@ -1060,7 +1081,7 @@ function vTimeGrid(nDays) {
       t.col = c; group.push(t); groupEnd = Math.max(groupEnd, t.f);
     }
     if (group.length) flush();
-    const evs = placed.map((t) => `<button class="tev" style="--k:${evColor(t.o.e)};top:${(t.s / 60) * HOUR_H}px;height:${Math.max(22, ((t.f - t.s) / 60) * HOUR_H - 2)}px;left:calc(${(t.col / t.n) * 100}% + 2px);width:calc(${100 / t.n}% - 4px)" data-occ="${esc(t.o.key)}"><b>${esc(t.o.e.title)}</b><span>${fmtHM(t.o.e.start_time)}${t.o.e.end_time ? ' – ' + fmtHM(t.o.e.end_time) : ''}${t.o.e.location ? ' · ' + esc(t.o.e.location) : ''}</span></button>`).join('');
+    const evs = placed.map((t) => `<button class="tev" style="--k:${evColor(t.o.e)};top:${(t.s / 60) * HOUR_H}px;height:${Math.max(22, ((t.f - t.s) / 60) * HOUR_H - 2)}px;left:calc(${(t.col / t.n) * 100}% + 2px);width:calc(${100 / t.n}% - 4px)" data-occ="${esc(t.o.key)}"><b>${esc(t.o.e.title)}</b><span>${fmtHM(t.o.e.start_time)}${t.o.e.end_time ? ' – ' + fmtHM(t.o.e.end_time) : ''}${evPlace(t.o.e) ? ' · ' + esc(evPlace(t.o.e)) : ''}</span></button>`).join('');
     const nowLine = day === td ? `<div class="nowline" style="top:${((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_H}px"></div>` : '';
     return `<div class="tcol${day === td ? ' today' : ''}">${Array.from({ length: 24 }, (_, h) => `<div class="slot" data-slot="${day}|${h}"></div>`).join('')}${evs}${nowLine}</div>`;
   }).join('');
@@ -1070,6 +1091,14 @@ function vTimeGrid(nDays) {
     <div class="trow tallday"><div class="tlbl">Journée</div>${allday}</div>
     <div class="tscroll" id="tscroll"><div class="trow tbody"><div class="tlbl hours">${Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HOUR_H}px">${h ? pad2(h) + ':00' : ''}</span>`).join('')}</div>${cols}</div></div>
   </div></div>`;
+}
+// Planning : les 30 prochains jours en liste, le plus pratique sur téléphone
+function vList() {
+  const from = S.calDate, to = addDays(from, LIST_DAYS - 1), list = occurrences(from, to), td = today();
+  const days = []; for (let d = from; d <= to; d = addDays(d, 1)) { const items = occOn(list, d); if (items.length) days.push([d, items]); }
+  if (!days.length) return `<div class="card empty">Rien de prévu du ${esc(fmtLong(from, { day: 'numeric', month: 'long' }))} au ${esc(fmtLong(to, { day: 'numeric', month: 'long' }))}.${can('calendrier') ? ` <button class="linkbtn" data-evnew="${from}">Ajouter un événement</button>` : ''}</div>`;
+  return `<div class="planning">${days.map(([d, items]) => { const p = parseD(d); return `<div class="plday${d === td ? ' today' : ''}"><button class="pldate" data-calgoday="${d}" aria-label="${esc(fmtLong(d))}"><b>${p.getDate()}</b><small>${esc(p.toLocaleDateString('fr-FR', { weekday: 'short' }))}</small><small>${esc(p.toLocaleDateString('fr-FR', { month: 'short' }))}</small></button>
+    <div class="agenda">${items.map((o) => { const abs = absentsOf(o).length; return `<button class="agitem" style="--k:${evColor(o.e)}" data-occ="${esc(o.key)}"><span class="when">${isTimed(o) ? fmtHM(o.e.start_time) + (o.e.end_time ? '<br>' + fmtHM(o.e.end_time) : '') : o.start !== o.end ? (o.start === d ? 'Début' : o.end === d ? 'Fin' : 'En cours') : 'Journée'}</span><span><b>${esc(o.e.title)}</b>${evPlace(o.e) || o.e.address ? `<small>${esc(evPlace(o.e) || o.e.address)}</small>` : ''}${abs ? `<small class="abs">${abs} absent${abs > 1 ? 's' : ''}</small>` : ''}</span></button>`; }).join('')}</div></div>`; }).join('')}</div>`;
 }
 function vYear() {
   const y = Number(S.calDate.slice(0, 4)), list = occurrences(`${y}-01-01`, `${y}-12-31`), td = today();
@@ -1092,7 +1121,8 @@ function evModal() {
       <p><b>${esc(occWhen(o))}</b></p>
       ${e.repeat && e.repeat !== 'none' ? `<p style="color:var(--muted)">${REPEATS[e.repeat]}${e.repeat_until ? " jusqu'au " + esc(fmtLong(e.repeat_until).toLowerCase()) : ''}</p>` : ''}
       ${grpPills(e)}
-      ${e.location || e.address ? `<p>📍 ${e.location ? `<b>${esc(e.location)}</b>` : ''}${e.location && e.address ? '<br>' : ''}${esc(e.address || '')}</p>` : ''}
+      ${e.online ? `<div class="evonline"><span class="eoic">${e.online_kind === 'link' ? '🔗' : '📹'}</span><span><b>Réunion en ligne</b><small>${e.online_kind === 'link' ? esc(visioName(e.online_url)) + ' · ' + esc(urlHost(e.online_url)) : `Appel vidéo dans la conversation « ${esc(convOf(e.online_channel || 'general').name)} »`}</small></span>${joinBtn(e)}</div>` : ''}
+      ${!e.online && (e.location || e.address) ? `<p>📍 ${e.location ? `<b>${esc(e.location)}</b>` : ''}${e.location && e.address ? '<br>' : ''}${esc(e.address || '')}</p>` : ''}
       ${hasCoords(e) ? `<div class="row">${placeLinks(e)}<button class="btn small" data-mapfocus="${e.id}">${ico('pin')} Voir sur la carte</button></div>` : ''}
       ${e.details ? `<p style="white-space:pre-wrap">${esc(e.details)}</p>` : ''}
       ${hasCoords(e) ? prayLine(o.start, { name: e.location || e.address, lat: e.lat, lng: e.lng }) : ''}
@@ -1120,36 +1150,86 @@ function evModal() {
       <label class="field" for="efUntil" id="efUntilWrap" ${!e.repeat || e.repeat === 'none' ? 'hidden' : ''}>Jusqu'au<input id="efUntil" type="date" value="${esc(e.repeat_until || '')}"></label>
     </div>
     <div class="field"><span>Groupes concernés</span><div class="grpchips" role="group" aria-label="Groupes concernés">${S.groups.map((g) => `<button type="button" data-evgrp="${g.id}" aria-pressed="${(e.group_ids || []).includes(g.id)}" style="--k:${g.color}"><span class="dot"></span>${esc(g.name)}</button>`).join('')}</div><small class="hint">Aucun groupe coché : l'événement concerne toute l'unité.</small></div>
-    <div class="field"><span>Pôles concernés</span><div class="grpchips" role="group" aria-label="Pôles concernés">${S.poles.map((p) => `<button type="button" data-evpole="${p.id}" aria-pressed="${(e.pole_ids || []).includes(p.id)}" style="--k:${p.color}"><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div><small class="hint">Réunion de pôle : seuls les membres des pôles cochés la voient et sont attendus (ainsi que les administrateurs et les chefs autorisés à voir les réunions de pôle). Aucun pôle coché : tous les chefs.</small></div>
+    <div class="field"><span>Pôles concernés</span><div class="grpchips" role="group" aria-label="Pôles concernés">${S.poles.map((p) => `<button type="button" data-evpole="${p.id}" aria-pressed="${(e.pole_ids || []).includes(p.id)}" style="--k:${p.color}"><span class="dot"></span>${esc(p.short_name)}</button>`).join('')}</div><small class="hint">Réunion de pôle : seuls les membres des pôles cochés la voient. Aucun pôle coché : tous les chefs.</small></div>
+    <div class="field"><span>Où ?</span><div class="seg efwhere" role="group" aria-label="Lieu ou en ligne"><button type="button" data-efwhere="place" aria-pressed="${!e.online}">📍 Sur place</button><button type="button" data-efwhere="online" aria-pressed="${!!e.online}">💻 En ligne</button></div></div>
+    <div id="efOnline" class="efonline" ${e.online ? '' : 'hidden'}>
+      <div class="seg" role="group" aria-label="Type de réunion en ligne"><button type="button" data-efkind="app" aria-pressed="${e.online_kind !== 'link'}">📹 Appel dans l'appli</button><button type="button" data-efkind="link" aria-pressed="${e.online_kind === 'link'}">🔗 Lien (Zoom, Meet…)</button></div>
+      <label class="field" for="efChan" ${e.online_kind === 'link' ? 'hidden' : ''}>Conversation de l'appel<select id="efChan">${myChannels().filter((c) => !c.announce).map((c) => `<option value="${c.id}" ${c.id === (e.online_channel || defaultCallChan(e)) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><small class="hint">Le jour J, « Rejoindre » lance l'appel vidéo dans cette conversation.</small></label>
+      <label class="field" for="efUrl" ${e.online_kind === 'link' ? '' : 'hidden'}>Lien de la visio<input id="efUrl" type="text" inputmode="url" autocapitalize="off" spellcheck="false" maxlength="500" placeholder="https://meet.google.com/…" value="${esc(e.online_url || '')}"></label>
+    </div>
+    <div id="efPlace" ${e.online ? 'hidden' : ''}>
     <label class="field" for="efLoc">Nom du lieu<input id="efLoc" maxlength="160" value="${esc(e.location || '')}" placeholder="Ex. Housseynia, base de loisirs…"></label>
     <div class="field addr"><label for="efAddr">Adresse</label>
       <div class="addrbox"><input id="efAddr" autocomplete="off" spellcheck="false" maxlength="200" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="efAddrList" placeholder="Tapez une adresse, ex. 17 rue…" value="${esc(e.address || '')}" ${hasCoords(e) ? `data-lat="${e.lat}" data-lng="${e.lng}" data-ok="1"` : ''}>
       <ul id="efAddrList" class="addrlist" role="listbox" hidden></ul></div>
       <small class="hint" id="efAddrHint">${hasCoords(e) ? '✓ Adresse vérifiée' : 'Choisissez une adresse dans les suggestions (toutes les adresses de France).'}</small></div>
+    </div>
     <label class="field" for="efDetails">Précisions<textarea id="efDetails" maxlength="2000">${esc(e.details || '')}</textarea></label>
     <p class="err" id="efErr" role="alert" hidden></p>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-closemodal>Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div>
   </form></div>`;
 }
+function calBody() {
+  const v = S.calView;
+  return v === 'jour' ? vTimeGrid(1) : v === 'semaine' ? vTimeGrid(7) : v === 'annee' ? vYear() : v === 'liste' ? vList() : vMonth();
+}
 function vCal() {
   const v = S.calView;
-  const body = v === 'jour' ? vTimeGrid(1) : v === 'semaine' ? vTimeGrid(7) : v === 'annee' ? vYear() : vMonth();
-  return `<div class="view wide">
-  <div><span class="eyebrow">Planification</span><h1>Calendrier</h1></div>
+  return `<div class="view wide calview">
   <div class="calbar">
-    <div class="row"><button class="btn" data-caltoday>Aujourd'hui</button><span class="row" style="gap:4px"><button class="btn icon" data-calnav="-1" aria-label="Période précédente">‹</button><button class="btn icon" data-calnav="1" aria-label="Période suivante">›</button></span><h2 class="caltitle">${esc(calTitle())}</h2></div>
-    <div class="row"><div class="seg" role="group" aria-label="Affichage">${CAL_VIEWS.map(([k, l]) => `<button data-calview="${k}" aria-pressed="${v === k}">${l}</button>`).join('')}</div>
-      ${can('calendrier') ? `<button class="btn primary" data-evnew="">+ Nouvel événement</button>` : ''}</div>
+    <div class="calnav"><button class="btn icon" data-calnav="-1" aria-label="Période précédente">‹</button><h2 class="caltitle" id="calTitle">${esc(calTitle())}</h2><button class="btn icon" data-calnav="1" aria-label="Période suivante">›</button><button class="btn small" data-caltoday>Aujourd'hui</button></div>
+    <div class="calopts"><div class="seg" id="calSeg" role="group" aria-label="Affichage">${CAL_VIEWS.map(([k, l]) => `<button data-calview="${k}" aria-pressed="${v === k}">${l}</button>`).join('')}</div>
+      ${can('calendrier') ? `<button class="btn primary calnew" data-evnew="">+ Nouvel événement</button>` : ''}</div>
   </div>
   <div class="legend">${EV_CATS.map((c) => `<span><span class="dot" style="--k:${c[2]}"></span>${c[1]}</span>`).join('')}</div>
-  ${body}
+  <div id="calbody" class="calbody">${calBody()}</div>
+  ${can('calendrier') ? '<button class="calfab" data-evnew="" aria-label="Nouvel événement">+</button>' : ''}
   </div>`;
 }
+// Changer de période ou d'affichage : seul le calendrier est redessiné, avec un léger glissement
+function calPaint(dir = 0) {
+  try { localStorage.setItem('tdi-calview', S.calView); } catch (e) { /* facultatif */ }
+  const b = $('#calbody');
+  if (S.view !== 'calendrier' || !b || S.evModal) return render();
+  b.innerHTML = calBody();
+  $('#calTitle').textContent = calTitle();
+  document.querySelectorAll('#calSeg [data-calview]').forEach((x) => x.setAttribute('aria-pressed', x.dataset.calview === S.calView));
+  b.classList.remove('slide-l', 'slide-r', 'fade'); void b.offsetWidth; b.classList.add(dir > 0 ? 'slide-l' : dir < 0 ? 'slide-r' : 'fade');
+  calScrollInit();
+}
+// Vue jour / semaine : on arrive sur le premier rendez-vous (ou sur l'heure actuelle), pas toujours à 7 h
+function calScrollInit() {
+  const ts = $('#tscroll'); if (!ts) return;
+  if (S.calScroll == null) {
+    const tops = [...ts.querySelectorAll('.tev')].map((x) => parseFloat(x.style.top));
+    const now = ts.querySelector('.nowline');
+    const y = now ? parseFloat(now.style.top) - 1.5 * HOUR_H : tops.length ? Math.min(...tops) - HOUR_H / 2 : 8 * HOUR_H;
+    S.calScroll = Math.max(0, y);
+  }
+  ts.scrollTop = S.calScroll;
+  ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true });
+}
+// Glisser à gauche / à droite pour changer de période (téléphone)
+let calSwipe = null;
+root.addEventListener('touchstart', (e) => { const b = e.target.closest('#calbody'); calSwipe = b && e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null; }, { passive: true });
+root.addEventListener('touchend', (e) => {
+  const sw = calSwipe; calSwipe = null; if (!sw || S.evModal) return;
+  const t = e.changedTouches[0], dx = t.clientX - sw.x, dy = t.clientY - sw.y;
+  if (Math.abs(dx) > 70 && Math.abs(dx) > 1.8 * Math.abs(dy) && Date.now() - sw.t < 600) { const n = dx < 0 ? 1 : -1; calMove(n); calPaint(n); }
+}, { passive: true });
+// Clavier (ordinateur) : ← → pour changer de période, T pour aujourd'hui
+document.addEventListener('keydown', (e) => {
+  if (S.view !== 'calendrier' || S.evModal || S.sheet || e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { const n = e.key === 'ArrowRight' ? 1 : -1; calMove(n); calPaint(n); e.preventDefault(); }
+  else if (e.key === 't' || e.key === 'T') { S.calDate = S.calSel = today(); S.calScroll = null; calPaint(); }
+});
 function findOcc(key) {
   const [id, start] = key.split('|'); const e = S.events.find((x) => String(x.id) === id); if (!e) return null;
   const len = e.end_date ? dayDiff(e.date, e.end_date) : 0;
   return { e, start, end: addDays(start, len), key };
 }
+// Conversation proposée pour l'appel : le pôle de la réunion s'il n'y en a qu'un, sinon « Général »
+const defaultCallChan = (e) => ((e.pole_ids || []).length === 1 && seesChan(S.me, e.pole_ids[0]) ? e.pole_ids[0] : 'general');
 function newEventDraft(day, hour) {
   const d = day || (S.calView === 'mois' ? S.calSel || today() : S.calDate);
   const h = hour ?? null;
@@ -1163,20 +1243,24 @@ async function saveEvent() {
   if (!start) return err('Indiquez la date de début.');
   if (end < start) return err('La fin doit être après le début.');
   if (!allDay && end === start && v('#efEndT') && v('#efEndT') <= v('#efStartT')) return err("L'heure de fin doit être après l'heure de début.");
-  const addrOk = $('#efAddr').dataset.ok === '1' && !!v('#efAddr');
-  if (v('#efAddr') && !addrOk) return err("Choisissez l'adresse dans la liste des suggestions pour qu'elle apparaisse sur la carte.");
+  const online = $('[data-efwhere="online"]').getAttribute('aria-pressed') === 'true';
+  const kind = $('[data-efkind="link"]').getAttribute('aria-pressed') === 'true' ? 'link' : 'app';
+  const addrOk = !online && $('#efAddr').dataset.ok === '1' && !!v('#efAddr');
+  if (!online && v('#efAddr') && !addrOk) return err("Choisissez l'adresse dans la liste des suggestions pour qu'elle apparaisse sur la carte.");
+  let url = v('#efUrl');
+  if (online && kind === 'link') { if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url; url = url.replace(/^http:/i, 'https:'); if (!url || !urlHost(url)) return err('Collez le lien de la visio (Zoom, Google Meet, Teams…).'); }
   const repeat = $('#efRepeat').value;
   if (repeat !== 'none' && v('#efUntil') && v('#efUntil') < start) return err('La date de fin de répétition doit être après le début.');
   const row = {
     title: v('#efTitle'), category: $('#efCat').value, date: start, end_date: end === start ? null : end, all_day: allDay,
     start_time: allDay ? null : v('#efStartT') || null, end_time: allDay ? null : v('#efEndT') || null,
-    location: v('#efLoc') || null, group_ids: [...document.querySelectorAll('[data-evgrp][aria-pressed="true"]')].map((b) => b.dataset.evgrp),
+    location: online ? null : v('#efLoc') || null, online, online_kind: online ? kind : null, online_channel: online && kind === 'app' ? $('#efChan').value : null, online_url: online && kind === 'link' ? url : null, group_ids: [...document.querySelectorAll('[data-evgrp][aria-pressed="true"]')].map((b) => b.dataset.evgrp),
     pole_ids: [...document.querySelectorAll('[data-evpole][aria-pressed="true"]')].map((b) => b.dataset.evpole),
     address: addrOk ? v('#efAddr') : null, lat: addrOk ? Number($('#efAddr').dataset.lat) : null, lng: addrOk ? Number($('#efAddr').dataset.lng) : null, details: v('#efDetails') || null, repeat, repeat_until: repeat === 'none' ? null : v('#efUntil') || null
   };
   const id = S.evModal.ev.id;
   const r = id ? await sb.from('events').update(row).eq('id', id).select().single() : await sb.from('events').insert({ ...row, created_by: S.me.id }).select().single();
-  if (r.error) return fail(r.error);
+  if (r.error) return fail(['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 24 dans Supabase (réunions en ligne)") : r.error);
   S.events = S.events.filter((x) => x.id !== r.data.id).concat(r.data).sort((a, b) => a.date.localeCompare(b.date));
   S.evModal = null; render(); toast(id ? 'Événement modifié' : 'Événement ajouté');
 }
@@ -1259,7 +1343,7 @@ function evCardHtml(m) {
   if (!e) return `<div class="evcard off"><span class="evday"><b>?</b></span><span class="locmain"><b>${esc(m.body.replace(/^📅\s*/, ''))}</b><small>Événement non disponible</small></span></div>`;
   const o = occurrences(today(), addDays(today(), 400)).find((x) => x.e.id === e.id) || { e, start: e.date, end: e.end_date || e.date };
   return `<button type="button" class="evcard" data-evopen="${e.id}"><span class="evday" style="--k:${evColor(e)}"><b>${parseD(o.start).getDate()}</b><small>${parseD(o.start).toLocaleDateString('fr-FR', { month: 'short' })}</small></span>
-    <span class="locmain"><b>${esc(e.title)}</b><small>${esc(occWhen(o))}${e.location ? ' · ' + esc(e.location) : ''}</small><span class="evopen">Voir dans le calendrier ›</span></span></button>`;
+    <span class="locmain"><b>${esc(e.title)}</b><small>${esc(occWhen(o))}${evPlace(e) ? ' · ' + esc(evPlace(e)) : ''}</small><span class="evopen">Voir dans le calendrier ›</span></span></button>`;
 }
 // Liens temporaires (1 h) : gardés 50 minutes, demandés par lots après l'affichage
 S.attLinks = {};
@@ -1948,7 +2032,7 @@ function evPickSheet() {
   return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="epTitle">
     <div class="row" style="justify-content:space-between"><h2 id="epTitle">Partager un événement</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
     <div class="dmlist">${list.map((o) => `<button class="convrow" data-evshare="${o.e.id}" data-evday="${o.start}"><span class="evday" style="--k:${evColor(o.e)}"><b>${parseD(o.start).getDate()}</b><small>${parseD(o.start).toLocaleDateString('fr-FR', { month: 'short' })}</small></span>
-      <span class="cmain"><span class="ctop"><b>${esc(o.e.title)}</b></span><span class="cbot"><span>${esc(shortWhen(o))}${o.e.location ? ' · ' + esc(o.e.location) : ''}</span></span></span></button>`).join('') || '<p class="convnone">Aucun événement à venir.</p>'}</div></div></div>`;
+      <span class="cmain"><span class="ctop"><b>${esc(o.e.title)}</b></span><span class="cbot"><span>${esc(shortWhen(o))}${evPlace(o.e) ? ' · ' + esc(evPlace(o.e)) : ''}</span></span></span></button>`).join('') || '<p class="convnone">Aucun événement à venir.</p>'}</div></div></div>`;
 }
 
 /* ---------- Réponses ---------- */
@@ -2744,7 +2828,7 @@ async function loadAiQuota() { if (!S.me) return; const r = await sb.rpc('ai_quo
 // Ce que l'assistant doit savoir : seulement ce que le chef voit déjà dans l'appli
 function aiContext() {
   const d = today(), occ = occurrences(d, addDays(d, 60)).slice(0, 40);
-  const ev = occ.map((o) => `- [${o.e.id}] ${occWhen(o)} · ${o.e.title}${o.e.location ? ' · ' + o.e.location : ''}`).join('\n');
+  const ev = occ.map((o) => `- [${o.e.id}] ${occWhen(o)} · ${o.e.title}${evPlace(o.e) ? ' · ' + evPlace(o.e) : ''}`).join('\n');
   return [`Aujourd'hui : ${fmtLong(d)}, ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.`,
     `Son groupe : ${grp(S.me.group_id)?.name || '—'} ; ses pôles : ${poleNames(S.me) || '—'}.`,
     `Groupes : ${S.groups.map((g) => g.name).join(', ')}.`, `Pôles : ${S.poles.map((x) => x.name).join(', ')}.`,
@@ -3400,7 +3484,7 @@ function render() {
   </aside><main id="main">${(V[S.view] || vAccueil)()}</main>${tabbarHtml()}${sheet}</div>`;
   const m = $('#msgs'); if (m) { m.scrollTop = m.scrollHeight; fillAttLinks(); }
   if (S.view === 'localisation') initMap(); else if (mapInst) { mapInst.remove(); mapInst = null; mapMarkers = []; }
-  const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
+  calScrollInit();
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (draft && $('#msgIn')) { $('#msgIn').value = draft; growMsg(); }
   syncCompose();
@@ -3478,11 +3562,14 @@ root.addEventListener('click', async (e) => {
   const ps = t.closest('[data-ppset]'); if (ps) { const a = S.ppResults?.[Number(ps.dataset.ppset)]; return a && setPrayPlace(a); }
   const nc = t.closest('[data-notifch]'); if (nc) { const id = nc.dataset.notifch; return setNotifCh(S.notifCh.includes(id) ? S.notifCh.filter((x) => x !== id) : [...S.notifCh, id]); }
   const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? NOTIF_IDS() : []);
-  const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
-  const cn = t.closest('[data-calnav]'); if (cn) { calMove(Number(cn.dataset.calnav)); return render(); }
-  if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return render(); }
-  const cg = t.closest('[data-calgoday]'); if (cg) { S.calDate = S.calSel = cg.dataset.calgoday; S.calView = 'jour'; return render(); }
-  const cm = t.closest('[data-calgomonth]'); if (cm) { S.calDate = S.calSel = cm.dataset.calgomonth; S.calView = 'mois'; return render(); }
+  const cv = t.closest('[data-calview]'); if (cv) { if (S.calView === cv.dataset.calview) return; S.calView = cv.dataset.calview; S.calScroll = null; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; if (S.calView === 'liste' && S.calDate < today() && today().slice(0, 7) === S.calDate.slice(0, 7)) S.calDate = today(); return calPaint(); }
+  const cn = t.closest('[data-calnav]'); if (cn) { const n = Number(cn.dataset.calnav); calMove(n); return calPaint(n); }
+  if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return calPaint(); }
+  const cg = t.closest('[data-calgoday]'); if (cg) { S.calDate = S.calSel = cg.dataset.calgoday; S.calView = 'jour'; S.calScroll = null; return calPaint(); }
+  const cm = t.closest('[data-calgomonth]'); if (cm) { S.calDate = S.calSel = cm.dataset.calgomonth; S.calView = 'mois'; return calPaint(); }
+  const ej = t.closest('[data-evjoin]'); if (ej) return evJoin(ej.dataset.evjoin);
+  const ew = t.closest('[data-efwhere]'); if (ew) { const on = ew.dataset.efwhere === 'online'; document.querySelectorAll('[data-efwhere]').forEach((b) => b.setAttribute('aria-pressed', b === ew)); $('#efOnline').hidden = !on; $('#efPlace').hidden = on; return; }
+  const ek = t.closest('[data-efkind]'); if (ek) { const link = ek.dataset.efkind === 'link'; document.querySelectorAll('[data-efkind]').forEach((b) => b.setAttribute('aria-pressed', b === ek)); $('label[for="efChan"]').hidden = link; $('label[for="efUrl"]').hidden = !link; if (link) $('#efUrl').focus(); return; }
   const oc = t.closest('[data-occ]'); if (oc) { const o = findOcc(oc.dataset.occ); if (o) { S.evModal = { mode: 'view', occ: o }; render(); } return; }
   const en = t.closest('[data-evnew]'); if (en) { S.evModal = { mode: 'edit', ev: newEventDraft(en.dataset.evnew || null) }; render(); $('#efTitle')?.focus(); return; }
   const ee = t.closest('[data-evedit]'); if (ee) { const o = findOcc(ee.dataset.evedit); if (o) { S.evModal = { mode: 'edit', ev: { ...o.e } }; render(); $('#efTitle')?.focus(); } return; }
@@ -3491,7 +3578,7 @@ root.addEventListener('click', async (e) => {
     S.events = S.events.filter((x) => String(x.id) !== ed.dataset.evdel); S.evModal = null; render(); toast('Événement supprimé');
   });
   const sl = t.closest('[data-slot]'); if (sl && can('calendrier')) { const [d, h] = sl.dataset.slot.split('|'); S.evModal = { mode: 'edit', ev: newEventDraft(d, Number(h)) }; render(); $('#efTitle')?.focus(); return; }
-  const cd = t.closest('[data-calday]'); if (cd) { if (S.calView === 'mois') { S.calSel = cd.dataset.calday; return render(); } if (can('calendrier')) { S.evModal = { mode: 'edit', ev: newEventDraft(cd.dataset.calday) }; render(); $('#efTitle')?.focus(); } return; }
+  const cd = t.closest('[data-calday]'); if (cd) { if (S.calView === 'mois') { if (S.calSel === cd.dataset.calday && narrow()) { S.calDate = S.calSel; S.calView = 'jour'; S.calScroll = null; return calPaint(); } S.calSel = cd.dataset.calday; return calPaint(); } if (can('calendrier')) { S.evModal = { mode: 'edit', ev: newEventDraft(cd.dataset.calday) }; render(); $('#efTitle')?.focus(); } return; }
   // Réclamations
   const rt = t.closest('[data-rectab]'); if (rt) { S.recTab = rt.dataset.rectab; return render(); }
   const rf = t.closest('[data-recfilter]'); if (rf) { S.recFilter = rf.dataset.recfilter; return render(); }
@@ -3646,6 +3733,8 @@ root.addEventListener('change', (e) => {
   if (e.target.id === 'vitrineFile' && e.target.files[0]) setVitrine(e.target.files[0]);
   if (e.target.id === 'efAllDay') document.querySelectorAll('.timef').forEach((x) => (x.hidden = e.target.checked));
   if (e.target.id === 'efRepeat') $('#efUntilWrap').hidden = e.target.value === 'none';
+  if (e.target.id === 'efStart') { const en = $('#efEnd'), d0 = e.target.dataset.prev || e.target.defaultValue; if (en && e.target.value) { const len = d0 && en.value ? Math.max(0, dayDiff(d0, en.value)) : 0; en.value = addDays(e.target.value, len); } e.target.dataset.prev = e.target.value; }
+  if (e.target.id === 'efStartT') { const en = $('#efEndT'), t0 = e.target.dataset.prev || e.target.defaultValue; if (en && e.target.value && t0) { const m = Math.min(23 * 60 + 59, toMin(e.target.value) + Math.max(15, toMin(en.value) - toMin(t0))); en.value = pad2(Math.floor(m / 60)) + ':' + pad2(m % 60); } e.target.dataset.prev = e.target.value; }
   if (e.target.id === 'efStart' && ($('#efEnd').value < e.target.value || !$('#efEnd').value)) $('#efEnd').value = e.target.value;
   if (e.target.dataset.perm) savePerm(e.target);
   if (e.target.dataset.chatacc) saveChatAccess(e.target);
