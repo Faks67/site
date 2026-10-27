@@ -7,13 +7,15 @@
 // À créer dans Supabase : Edge Functions > Deploy a new function > Via Editor,
 // nom « assistant », coller ce fichier, puis Deploy. Laisser « Verify JWT » désactivé (la fonction vérifie elle-même).
 // Secret à ajouter (Edge Functions > Secrets) : GEMINI_API_KEY (clé créée sur aistudio.google.com).
-// Facultatif : GEMINI_MODEL pour changer de modèle (par défaut gemini-3.8-flash).
+// Facultatif : GEMINI_MODEL pour changer de modèle (par défaut gemini-flash-latest, le Flash stable de Google).
 
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 
-const MODEL = (Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash').trim();
+// Le Flash « stable » est bien moins souvent surchargé que le tout dernier modèle en formule gratuite
+const MODEL = (Deno.env.get('GEMINI_MODEL') || 'gemini-flash-latest').trim();
 // Modèles de secours, essayés si le premier est surchargé chez Google (erreur 503) ou n'existe plus
-const FALLBACKS = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
+const FALLBACKS = ['gemini-flash-lite-latest', 'gemini-3.8-flash'];
+const WAIT_MS = 10000; // sans début de réponse au bout de 10 s, on passe au modèle suivant
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -52,7 +54,7 @@ type Msg = { role: 'user' | 'model'; text: string };
 
 // Réflexion réduite au minimum : la réponse commence bien plus vite.
 // Si le modèle refuse un réglage, on essaie le suivant (et on retient celui qui marche).
-const THINK: (Record<string, string> | null)[] = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
+const THINK: (Record<string, string | number> | null)[] = [{ thinkingLevel: 'minimal' }, { thinkingBudget: 0 }, { thinkingLevel: 'low' }, null];
 const thinkOk: Record<string, number> = {};
 const busy = (st: number) => st === 503 || st === 500 || st === 429;
 async function gemini(key: string, contents: unknown, system: string) {
@@ -60,11 +62,16 @@ async function gemini(key: string, contents: unknown, system: string) {
   for (const model of [MODEL, ...FALLBACKS.filter((m) => m !== MODEL)]) {
     for (let i = thinkOk[model] || 0; i < THINK.length; i++) {
       const generationConfig = { temperature: 0.8, maxOutputTokens: 4096, ...(THINK[i] ? { thinkingConfig: THINK[i] } : {}) };
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
-        method: 'POST',
+      let r: Response;
+      // Délai seulement pour le début de la réponse (la suite peut prendre plus longtemps)
+      const ac = new AbortController(), timer = setTimeout(() => ac.abort(), WAIT_MS);
+      try {
+        r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+        method: 'POST', signal: ac.signal,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig })
-      });
+        });
+      } catch { console.warn('Gemini', model, 'trop lent → modèle suivant'); last = new Response('{}', { status: 503 }); break; } finally { clearTimeout(timer); }
       if (r.status === 400 && THINK[i]) { const t = await r.text(); if (/think/i.test(t)) continue; return new Response(t, { status: 400 }); }
       if (r.ok) { thinkOk[model] = i; return r; }
       if (r.status === 404 || busy(r.status)) { console.warn('Gemini', model, r.status, '→ modèle suivant'); await r.body?.cancel(); last = new Response('{}', { status: r.status }); break; }
