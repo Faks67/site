@@ -1187,3 +1187,57 @@ button,a,label,[role="button"],.convrow{-webkit-tap-highlight-color:transparent;
 .qzwinner b{display:block;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
 .qzhow summary{font-weight:700;cursor:pointer}
 .qzhow ul{margin:10px 0 0;padding-left:20px;color:var(--muted);display:flex;flex-direction:column;gap:6px;font-size:.92rem}
+
+/* ---------- L'assistant ---------- */
+.aico{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#4f7df0,#8b5cf6 60%,#e0569b);flex:none}
+.aico svg{width:20px;height:20px}
+.aico.big{width:60px;height:60px;border-radius:20px}.aico.big svg{width:32px;height:32px}
+.aico.sm{width:28px;height:28px;border-radius:9px}.aico.sm svg{width:16px;height:16px}
+.aicard{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--surface);border:1.5px solid #c9d8f7;border-radius:var(--radius);padding:12px 14px;color:var(--fg);box-shadow:0 4px 14px rgba(47,95,208,.10)}
+[data-theme="dark"] .aicard{border-color:#34406a}
+.aicard>span:nth-child(2){flex:1;display:flex;flex-direction:column}
+.aicard small{color:var(--muted);font-size:.84rem}
+.aicard .go{color:#4f7df0;font-weight:800;font-size:1.4rem}
+.aiview{flex:1;min-height:0;max-width:820px;width:100%;margin:0 auto;display:flex;flex-direction:column;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.aihead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex:none}
+.aiht{flex:1;min-width:0;display:flex;flex-direction:column}
+.aiht b{font-size:1.1rem;line-height:1.15}
+.aiht small{color:var(--muted);font-size:.78rem}
+.ainew{border:0;border-radius:99px;background:var(--green-soft);color:var(--green-ink);font-weight:800;font-size:.82rem;padding:7px 12px;white-space:nowrap}
+.aimsgs{flex:1;min-height:0;overflow:auto;padding:16px 14px;display:flex;flex-direction:column;gap:10px;background:var(--bg);overscroll-behavior:contain}
+.aiwelcome{text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px;margin:4px 0 6px}
+.aiwelcome h2{margin:6px 0 0;font-size:1.35rem}
+.aiwelcome p{color:var(--muted);font-size:.92rem;max-width:36ch;margin:0}
+.ailbl{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-top:6px}
+.aisugg{display:flex;flex-direction:column;gap:8px}
+.aisg{display:flex;align-items:center;gap:10px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 12px;font-weight:700;font-size:.92rem;color:var(--fg)}
+.aisg>span:first-child{font-size:1.25rem}
+.aisg small{display:block;color:var(--muted);font-weight:600;font-size:.78rem}
+.ainote{color:var(--muted);font-size:.8rem;text-align:center;margin:8px 0 0}
+.aime{align-self:flex-end;max-width:84%;background:var(--green);color:#fff;border-radius:18px 18px 4px 18px;padding:9px 13px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin-top:10px}
+[data-theme="dark"] .aime{color:var(--on-green)}
+.aiai{display:flex;gap:8px;align-items:flex-start}
+.aib{background:var(--surface);border:1px solid var(--line);border-radius:4px 18px 18px 18px;padding:10px 14px;line-height:1.5;flex:1;min-width:0;overflow-wrap:anywhere}
+.aib.err{background:#fff6e0;border-color:#f0d58a;color:#6a4c00}
+[data-theme="dark"] .aib.err{background:#3a3016;border-color:#6a5520;color:#f2dc9b}
+.aib h4{margin:10px 0 4px;font-size:1.02rem}.aib h4:first-child{margin-top:0}
+.aib p{margin:0 0 6px}.aib p:last-child{margin-bottom:0}
+.aib ul,.aib ol{margin:4px 0 8px;padding-left:20px}.aib li{margin:2px 0}
+.aib code{background:var(--surface-2);border-radius:4px;padding:0 4px}
+.aib .evcard{margin:6px 0}
+.aiacts{display:flex;gap:6px;flex-wrap:wrap;margin:-2px 0 4px 36px}
+.aiacts button{display:inline-flex;align-items:center;gap:4px;font-size:.8rem;font-weight:800;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:6px 11px;color:var(--fg)}
+.aiacts button.pri{background:var(--green-soft);border-color:transparent;color:var(--green-ink)}
+.aidots{display:inline-flex;gap:5px;padding:4px 0}
+.aidots i{width:8px;height:8px;border-radius:50%;background:#8b5cf6;animation:aidot 1s ease-in-out infinite}
+.aidots i:nth-child(2){animation-delay:.15s}.aidots i:nth-child(3){animation-delay:.3s}
+@keyframes aidot{50%{opacity:.3;transform:translateY(-3px)}}
+.aicomp{flex:none;display:flex;gap:8px;align-items:flex-end;padding:8px 12px;border-top:1px solid var(--line);background:var(--surface)}
+.aicomp textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:20px;padding:10px 14px;font:inherit;background:var(--bg);color:var(--fg);max-height:140px;line-height:1.35}
+.aicomp .asend{width:42px;height:42px;border-radius:50%;border:0;background:var(--green);color:#fff;display:grid;place-items:center;flex:none}
+.aicomp .asend:disabled{opacity:.45}
+.aiprev{background:var(--surface-2);border-radius:12px;padding:10px 12px;font-size:.85rem;color:var(--muted)}
+.aishlist{display:flex;flex-direction:column;max-height:50vh;overflow:auto}
+@media (max-width:860px){
+  html.chatmode .aiview{border-radius:16px}
+}

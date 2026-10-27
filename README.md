@@ -161,6 +161,17 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - **Manches de 2 semaines** (lundi → dimanche suivant, la première commence le lundi 26 octobre 2026) : semaine 1 sur l'islam de base, semaine 2 sur les Ahlul Bayt et le fiqh ja'farite.
    - **Onglet « Défi »** : classement en direct (podium, points, bonnes réponses), gagnant de la manche précédente et règles.
 
+## Mise à jour 22 : l'assistant (Gemini)
+
+1. **Clé Gemini** (gratuite, sans carte) : sur [aistudio.google.com](https://aistudio.google.com), *Dashboard > API keys > Create API key*. Dans Supabase, *Edge Functions > Secrets* : ajouter `GEMINI_API_KEY` avec cette clé. Ne jamais activer la facturation (« billing ») chez Google.
+2. **Base de données** : dans *SQL Editor > New query*, coller `supabase/22-assistant.sql` et cliquer sur *Run*. Limites : 15 questions par chef et par jour, 400 pour tout le monde (à changer dans `ai_limits()` puis relancer le script).
+3. **Fonction `assistant`** : *Edge Functions > Deploy a new function > Via Editor*, nom **`assistant`**, coller `supabase/functions/assistant/index.ts`, *Deploy*, puis laisser **Verify JWT désactivé** (la fonction vérifie elle-même). Modèle : `gemini-3.8-flash` (secret facultatif `GEMINI_MODEL` pour en changer).
+4. Dans le site :
+   - **Onglet « Assistant »** (menu Plus sur téléphone) et carte sur l'accueil : suggestions prêtes (grand jeu, sortie, veillée, annonce aux parents, programme du mois), réponses mises en forme.
+   - Sous chaque réponse : **Envoyer dans une discussion** (le texte est placé dans le champ, à relire avant d'envoyer), **Copier**, **Autre idée**.
+   - L'assistant connaît le calendrier des 60 prochains jours, les groupes et les pôles, seulement ce que le chef voit déjà. Il ne donne pas d'avis de fiqh et renvoie vers le responsable religieux.
+   - Les conversations restent sur le téléphone (rien n'est enregistré dans la base). Avec la formule gratuite, Google peut utiliser les questions pour améliorer ses modèles : ne pas y mettre d'informations personnelles sur les enfants.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

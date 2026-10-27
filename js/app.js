@@ -43,6 +43,8 @@ const ICONS = {
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
   poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 3v4M17 5h4M5 17v4M3 19h4"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/>',
   trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 21h8M9 17h6"/>',
   pin2: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v8"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
@@ -503,7 +505,7 @@ document.addEventListener('visibilitychange', () => {
 checkVersion();
 
 /* ---------- Navigation ---------- */
-const NAV = [['accueil', 'Accueil', 'home'], ['defi', 'Défi', 'trophy'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
+const NAV = [['accueil', 'Accueil', 'home'], ['defi', 'Défi', 'trophy'], ['assistant', 'Assistant', 'spark'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
   const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}${n[0] === 'defi' ? quizDot(true) : ''}</button>`).join('')
@@ -512,7 +514,7 @@ function navHtml() {
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
 const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['localisation', 'Localisation', 'pin']];
 function tabbarHtml() {
-  const more = [['defi', 'Défi', 'trophy'], ['presences', 'Présences', 'check'], ['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['defi', 'Défi', 'trophy'], ['assistant', 'Assistant', 'spark'], ['presences', 'Présences', 'check'], ['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}><span class="ticon">${ico(i)}${k === 'discussion' ? badge('total') : ''}</span><span>${l}</span></button>`).join('')}
     <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}><span class="ticon">${ico('more')}${quizDot()}</span><span>Plus</span></button></nav>
@@ -778,6 +780,7 @@ function vAccueil() {
     </div>
   </div>
   ${quizCard()}
+  ${aiCard()}
   ${prayCard()}
   <div>
     <div class="stats">
@@ -2036,7 +2039,7 @@ function closePicker() {
   const pk = $('#picker'); if (pk) pk.hidden = true;
   $('.chat')?.classList.remove('gifull');
   const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight;
-  if (!['msgIn', 'gifQ'].includes(document.activeElement?.id)) document.documentElement.classList.remove('typing');
+  if (!['msgIn', 'gifQ', 'aiIn'].includes(document.activeElement?.id)) document.documentElement.classList.remove('typing');
   const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = '<span>GIF</span>'; b.setAttribute('aria-expanded', 'false'); }
 }
 // Envoi sans attente : le message s'affiche tout de suite (🕓), puis prend sa place définitive quand le serveur répond
@@ -2716,6 +2719,120 @@ function vDefi() {
   </div>`;
 }
 
+/* ---------- L'assistant (Gemini, mise à jour SQL 22 et fonction « assistant ») ----------
+   La conversation reste sur l'appareil ; à chaque question, le site envoie les derniers messages
+   et ce que le chef voit déjà (calendrier, groupes, pôles) pour que l'assistant puisse répondre. */
+const AI_KEY = () => 'tdi-ai-' + (S.me?.id || '');
+const AI_SUGG = [
+  ['Activités', [['🎯', 'Un grand jeu pour les 8-12 ans', 'Règles, matériel, durée', 'Propose-moi un grand jeu pour 20 enfants de 8 à 12 ans, 1h30, en extérieur : principe, règles, déroulé et matériel.'],
+    ['🌳', "Programme d'une sortie au parc", 'Horaires, activités, prière', "Prépare le programme d'une sortie au parc pour la journée (9h-17h) avec les enfants : horaires, activités, repas et moment de prière."],
+    ['🕯️', "Une veillée sur l'Imam Mahdi (aj)", '', "Propose une veillée d'une heure sur le thème de l'Imam Mahdi (aj) pour des enfants de 10-14 ans : déroulé, récit, jeu et moment d'échange."]]],
+  ['Rédaction et appli', [['✉️', 'Rédiger une annonce pour les parents', '', 'Aide-moi à rédiger une annonce courte et chaleureuse pour les parents à propos de notre prochaine sortie (date, heure, lieu, affaires à prévoir).'],
+    ['📅', "Qu'est-ce qui est prévu ce mois-ci ?", '', "Qu'est-ce qui est prévu dans le calendrier dans les 30 prochains jours ?"]]]];
+function aiLoad() { if (S.aiFor === S.me?.id && S.ai) return; S.aiFor = S.me?.id; try { S.ai = JSON.parse(localStorage.getItem(AI_KEY()) || '[]'); } catch (e) { S.ai = []; } }
+function aiSave() { try { localStorage.setItem(AI_KEY(), JSON.stringify(S.ai.slice(-30))); } catch (e) { /* facultatif */ } }
+async function loadAiQuota() { if (!S.me) return; const r = await sb.rpc('ai_quota'); S.aiQuota = r.error ? null : r.data; paintAiHead(); }
+// Ce que l'assistant doit savoir : seulement ce que le chef voit déjà dans l'appli
+function aiContext() {
+  const d = today(), occ = occurrences(d, addDays(d, 60)).slice(0, 40);
+  const ev = occ.map((o) => `- [${o.e.id}] ${occWhen(o)} · ${o.e.title}${o.e.location ? ' · ' + o.e.location : ''}`).join('\n');
+  return [`Aujourd'hui : ${fmtLong(d)}, ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.`,
+    `Son groupe : ${grp(S.me.group_id)?.name || '—'} ; ses pôles : ${poleNames(S.me) || '—'}.`,
+    `Groupes : ${S.groups.map((g) => g.name).join(', ')}.`, `Pôles : ${S.poles.map((x) => x.name).join(', ')}.`,
+    `Nombre de chefs et cheftaines : ${S.members.length}.`,
+    `Calendrier des 60 prochains jours :\n${ev || '(rien de prévu)'}`].join('\n');
+}
+async function aiSend(text) {
+  if (S.aiBusy) return;
+  if (S.aiQuota && S.aiQuota.remaining <= 0) return toast(`Vous avez utilisé vos ${S.aiQuota.limit} questions d'aujourd'hui. À demain !`);
+  S.ai.push({ role: 'user', text }); S.aiBusy = true; aiSave(); paintAi();
+  let out = {}, ok = false;
+  try {
+    const { data } = await sb.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/assistant`, { method: 'POST',
+      headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: S.ai.filter((m) => !m.err).slice(-12).map(({ role, text }) => ({ role, text })), context: aiContext() }) });
+    out = await r.json().catch(() => ({})); ok = r.ok;
+    if (!ok && r.status === 404) out.error = 'absente';
+  } catch (e) { out = { error: 'reseau' }; }
+  S.aiBusy = false;
+  if (ok) { S.ai.push({ role: 'model', text: out.text }); S.aiQuota = { remaining: out.remaining, limit: out.limit }; }
+  else {
+    const msg = { quota: `Vous avez utilisé vos ${out.limit || ''} questions d'aujourd'hui. À demain !`, quota_global: "L'assistant a atteint sa limite pour aujourd'hui (formule gratuite). Il revient demain.",
+      gemini_occupe: "Gemini est très demandé en ce moment. Réessayez dans une minute.", cle_absente: "La clé Gemini n'est pas encore enregistrée dans Supabase (secret GEMINI_API_KEY).",
+      cle_refusee: 'Google a refusé la clé Gemini : vérifiez le secret GEMINI_API_KEY dans Supabase.', sql_absent: "Lancez d'abord la mise à jour SQL 22 dans Supabase.",
+      absente: "La fonction « assistant » n'est pas encore installée dans Supabase (voir le README).", bloque: "Je ne peux pas répondre à cette demande. Essayez de la formuler autrement.",
+      reseau: 'Pas de connexion internet. Réessayez.' }[out.error] || `Je n'ai pas pu répondre (${out.error || 'erreur'}). Réessayez.`;
+    S.ai.push({ role: 'model', text: msg, err: true });
+    if (out.error === 'quota') S.aiQuota = { remaining: 0, limit: out.limit };
+  }
+  aiSave(); paintAi();
+}
+// Mise en forme simple de la réponse (titres, listes, gras), sans jamais insérer de HTML venu de l'IA
+function aiMd(src) {
+  const inl = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', list = null;
+  const close = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (const raw of src.split('\n')) {
+    const l = raw.trim(), ev = /^\[\[ev:([\w-]+)\]\]$/.exec(l), h = /^#{1,6}\s+(.*)/.exec(l), ul = /^[-*•]\s+(.*)/.exec(l), ol = /^\d+[.)]\s+(.*)/.exec(l);
+    if (ev) { close(); if (S.events.some((x) => x.id === ev[1])) html += evCardHtml({ event_ref: ev[1], body: '' }); continue; }
+    if (h) { close(); html += `<h4>${inl(h[1])}</h4>`; continue; }
+    if (ul || ol) { const k = ul ? 'ul' : 'ol'; if (list !== k) { close(); html += `<${k}>`; list = k; } html += `<li>${inl((ul || ol)[1])}</li>`; continue; }
+    close(); if (l) html += `<p>${inl(l)}</p>`;
+  }
+  close();
+  return html.replace(/\[\[ev:[\w-]+\]\]/g, '');
+}
+const aiPlain = (t) => t.replace(/^\s*\[\[ev:[\w-]+\]\]\s*$/gm, '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^#{1,6}\s+/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+const quotaTxt = () => (S.aiQuota ? `${S.aiQuota.remaining} question${S.aiQuota.remaining > 1 ? 's' : ''} restante${S.aiQuota.remaining > 1 ? 's' : ''} aujourd'hui` : "L'assistant des chefs");
+function aiMsgsHtml() {
+  if (!S.ai.length) return `<div class="aiwelcome"><span class="aico big">${ico('spark')}</span><h2>Salam ${esc(S.me.first_name)}, je vous aide ?</h2>
+    <p>Idées d'activités, annonces, programmes… Je connais aussi le calendrier, les groupes et le fonctionnement de l'appli.</p></div>
+    ${AI_SUGG.map(([t, l]) => `<div class="ailbl">${t}</div><div class="aisugg">${l.map(([i, a, b, q]) => `<button type="button" class="aisg" data-aisugg="${esc(q)}"><span>${i}</span><span>${esc(a)}${b ? `<small>${esc(b)}</small>` : ''}</span></button>`).join('')}</div>`).join('')}
+    <p class="ainote">🔒 Ne donnez pas d'informations personnelles sur les enfants (noms, santé…). Pour les questions de fiqh, demandez au responsable religieux.</p>`;
+  const last = S.ai.length - 1;
+  return S.ai.map((m, i) => m.role === 'user' ? `<div class="aime">${esc(m.text)}</div>`
+    : `<div class="aiai"><span class="aico sm">${ico('spark')}</span><div class="aib${m.err ? ' err' : ''}">${m.err ? esc(m.text) : aiMd(m.text)}</div></div>
+      ${m.err ? '' : `<div class="aiacts"><button type="button" class="pri" data-aishare="${i}">↗ Envoyer dans une discussion</button><button type="button" data-aicopy="${i}">${ico('copy', 14)} Copier</button>${i === last ? '<button type="button" data-aiagain>↻ Autre idée</button>' : ''}</div>`}`).join('')
+    + (S.aiBusy ? `<div class="aiai"><span class="aico sm">${ico('spark')}</span><div class="aib"><span class="aidots"><i></i><i></i><i></i></span></div></div>` : '');
+}
+const aiHeadHtml = () => `<span class="aico">${ico('spark')}</span><span class="aiht"><b>Assistant</b><small>Gemini · ${quotaTxt()}</small></span>${S.ai.length ? '<button type="button" class="ainew" data-ainew>+ Nouvelle</button>' : ''}`;
+function paintAiHead() { const h = $('#aihead'); if (h) h.innerHTML = aiHeadHtml(); }
+function paintAi() {
+  const b = $('#aimsgs'); if (!b) return render();
+  b.innerHTML = aiMsgsHtml(); paintAiHead();
+  const btn = $('#aiForm .asend'); if (btn) btn.disabled = !!S.aiBusy;
+  b.scrollTop = S.ai.length ? b.scrollHeight : 0;
+  if (S.ai.length && S.ai[S.ai.length - 1].role === 'model' && !S.aiBusy) { const l = b.querySelectorAll('.aime'); l[l.length - 1]?.scrollIntoView({ block: 'start' }); }
+}
+function aiGrow() { const i = $('#aiIn'); if (!i) return; i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 140) + 'px'; }
+function vAssistant() {
+  aiLoad(); if (S.aiQuota === undefined) { S.aiQuota = null; loadAiQuota(); }
+  return `<div class="view aiview"><div class="aihead" id="aihead">${aiHeadHtml()}</div>
+    <div class="aimsgs" id="aimsgs">${aiMsgsHtml()}</div>
+    <form class="aicomp" id="aiForm"><textarea id="aiIn" rows="1" maxlength="2000" placeholder="Posez votre question…" aria-label="Votre question"></textarea>
+    <button class="asend" aria-label="Envoyer" ${S.aiBusy ? 'disabled' : ''}>${ico('send')}</button></form></div>`;
+}
+function aiCard() {
+  if (!S.me) return '';
+  return `<button class="aicard" data-v="assistant"><span class="aico">${ico('spark')}</span><span><b>Demander à l'assistant</b><small>Idées d'activités, annonces, questions sur l'appli…</small></span><span class="go">›</span></button>`;
+}
+// Envoyer une réponse dans une conversation : le texte est placé dans le champ, à relire avant d'envoyer
+function aiShareSheet(i) {
+  const m = S.ai[i]; if (!m) return '';
+  return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="aishT"><h3 id="aishT" style="margin:0">Envoyer dans…</h3>
+    <div class="aiprev">${esc(aiPlain(m.text).slice(0, 160))}…</div>
+    <div class="aishlist">${convList().map((c) => `<button type="button" class="actrow" data-aito="${esc(c.id)}">${convAv(c, 'sm')}<span>${esc(c.name)}</span></button>`).join('')}</div>
+    <button type="button" class="btn" data-closemodal>Annuler</button></div></div>`;
+}
+function aiShareTo(ch, i) {
+  const m = S.ai[i]; if (!m) return;
+  S.sheet = null; go('discussion'); openConv(ch);
+  const put = () => { const f = $('#msgIn'); if (!f) return; f.value = aiPlain(m.text).slice(0, 4000); growMsg(); syncCompose(); f.focus(); };
+  put(); requestAnimationFrame(put);
+  toast('Relisez le texte, puis envoyez');
+}
+
 /* ---------- Rendu ---------- */
 function render() {
   if (!S.session) { root.innerHTML = vAuth(); return; }
@@ -2724,13 +2841,13 @@ function render() {
     root.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="assets/logo.png" alt=""><h2>Accès en attente</h2></div><p>Votre compte (${esc(S.session.user.email)}) n'est relié à aucun chef ou cheftaine. Demandez à un administrateur d'ajouter cette adresse dans la page Administration, puis reconnectez-vous.</p><button class="btn block" data-logout>Se déconnecter</button></div></div>`;
     return;
   }
-  const V = { defi: vDefi, presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
+  const V = { assistant: vAssistant, defi: vDefi, presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'quiz' ? quizSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet?.startsWith('convact:') ? convActSheet(S.sheet.slice(8)) : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'quiz' ? quizSheet() : S.sheet?.startsWith('aishare:') ? aiShareSheet(Number(S.sheet.slice(8))) : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet?.startsWith('convact:') ? convActSheet(S.sheet.slice(8)) : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
     : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
-  document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
+  document.documentElement.classList.toggle('chatmode', S.view === 'discussion' || S.view === 'assistant');
   document.documentElement.classList.toggle('convopen', S.view === 'discussion' && !!S.chan);
   root.innerHTML = `<div class="app"><aside class="side">
     <p class="slogan">Le bonheur de l'Imam est la plus belle des récompenses</p>
@@ -2746,7 +2863,8 @@ function render() {
   syncCompose();
   if (active === 'convQ') { const i = $('#convQ'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (active === 'msgIn') { const i = $('#msgIn'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
-  if (!$('#msgIn')) document.documentElement.classList.remove('typing');
+  if (!$('#msgIn') && !$('#aiIn')) document.documentElement.classList.remove('typing');
+  if (S.view === 'assistant') { const b = $('#aimsgs'); if (b && S.ai.length) b.scrollTop = b.scrollHeight; }
 }
 
 /* ---------- Écran fixe : pas de zoom avec les doigts, la discussion suit le clavier ---------- */
@@ -2775,12 +2893,12 @@ document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 && !e.t
 // Pendant l'écriture, la barre d'onglets du bas disparaît pour laisser la place
 document.addEventListener('focusin', (e) => {
   if (e.target.id === 'msgIn') closePicker();
-  if (['msgIn', 'gifQ'].includes(e.target.id)) { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); }
+  if (['msgIn', 'gifQ', 'aiIn'].includes(e.target.id)) { document.documentElement.classList.add('typing'); setTimeout(syncViewport, 50); }
 });
 document.addEventListener('focusout', (e) => {
   if (e.target.id === 'msgIn') setTimeout(() => { if (document.activeElement?.id !== 'msgIn' && S.mention) { S.mention = null; paintMentions(); } }, 150);
-  if (!['msgIn', 'gifQ'].includes(e.target.id)) return;
-  setTimeout(() => { if (!['msgIn', 'gifQ'].includes(document.activeElement?.id) && !S.picker) { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
+  if (!['msgIn', 'gifQ', 'aiIn'].includes(e.target.id)) return;
+  setTimeout(() => { if (!['msgIn', 'gifQ', 'aiIn'].includes(document.activeElement?.id) && !S.picker) { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
 });
 // Toucher le bouton Envoyer ou Emojis ne ferme pas le clavier
 root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn, .compose .gifin, .mentions button') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
@@ -2854,6 +2972,13 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
   if (t.closest('[data-convinfo]')) { $('#msgIn')?.blur(); S.sheet = 'convinfo'; render(); return; }
   if (t.closest('[data-locsend]')) return sendLocation();
+  // Assistant
+  const aisg = t.closest('[data-aisugg]'); if (aisg) return aiSend(aisg.dataset.aisugg);
+  if (t.closest('[data-ainew]')) { if (S.aiBusy) return; S.ai = []; aiSave(); return paintAi(); }
+  const aicp = t.closest('[data-aicopy]'); if (aicp) { const m = S.ai[Number(aicp.dataset.aicopy)]; navigator.clipboard?.writeText(aiPlain(m.text)).then(() => toast('Réponse copiée'), () => toast('Copie impossible')); return; }
+  if (t.closest('[data-aiagain]')) return aiSend('Propose-moi une autre idée, différente de la précédente.');
+  const ash = t.closest('[data-aishare]'); if (ash) { S.sheet = 'aishare:' + ash.dataset.aishare; return render(); }
+  const ato = t.closest('[data-aito]'); if (ato) return aiShareTo(ato.dataset.aito, Number(S.sheet?.slice(8)));
   // Défi du jour
   if (t.closest('[data-quizopen]')) { S.quizStep = S.quiz?.answered ? 'result' : 'intro'; S.sheet = 'quiz'; if (S.quiz?.answered) quizStart(); return render(); }
   if (t.closest('[data-quizstart]')) return quizStart();
@@ -2995,6 +3120,7 @@ root.addEventListener('submit', async (e) => {
     $('#msgIn').value = ''; growMsg(); syncCompose(); S.mention = null; paintMentions(); sendTyping(false);
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
+  if (id === 'aiForm') { e.preventDefault(); const i = $('#aiIn'), v = i.value.trim(); if (!v || S.aiBusy) return; i.value = ''; aiGrow(); return aiSend(v); }
   if (id === 'pollForm') { e.preventDefault(); return submitPoll(); }
   if (id === 'evForm') { e.preventDefault(); return saveEvent(); }
   if (id === 'ppForm') { e.preventDefault(); return searchPrayPlace($('#ppQ').value); }
@@ -3013,6 +3139,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evMod
 root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(e); }, true);
 // Sur ordinateur, Entrée envoie (Maj + Entrée pour aller à la ligne) ; sur téléphone, Entrée va à la ligne
 const touchScreen = () => matchMedia('(pointer: coarse)').matches;
+root.addEventListener('keydown', (e) => { if (e.target.id === 'aiIn' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); } });
 root.addEventListener('keydown', (e) => {
   if (e.target.id !== 'msgIn' || e.isComposing) return;
   // Liste des mentions ouverte : flèches pour choisir, Entrée ou Tab pour valider, Échap pour fermer
@@ -3025,6 +3152,7 @@ root.addEventListener('keydown', (e) => {
 root.addEventListener('input', (e) => {
   if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); syncCompose(); if (S.plusOpen) togglePlus(false); if (e.target.value.trim()) sendTyping(true); else if (S.typingSent) sendTyping(false); }
   if (e.target.id === 'convQ') { S.convQ = e.target.value; paintConvList(); }
+  if (e.target.id === 'aiIn') aiGrow();
   if (e.target.id === 'dmQ') { const q = fold(e.target.value.trim()); document.querySelectorAll('.dmlist [data-dm]').forEach((b) => (b.hidden = !!q && !b.dataset.cname.includes(q))); }
   if (e.target.matches('[data-pollq], [data-pollopt]')) pollInput(e.target);
   if (e.target.id === 'gifQ') { S.gifQ = e.target.value; clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs(S.gifQ.trim()), 350); }
@@ -3110,6 +3238,7 @@ async function boot() {
   if (!routed) route();
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
   if (S.me) { loadOverview(); loadQuiz(); }
+  if (S.view === 'assistant') loadAiQuota();
   if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
   render();
 }
