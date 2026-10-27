@@ -2730,7 +2730,7 @@ const AI_SUGG = [
   ['Rédaction et appli', [['✉️', 'Rédiger une annonce pour les parents', '', 'Aide-moi à rédiger une annonce courte et chaleureuse pour les parents à propos de notre prochaine sortie (date, heure, lieu, affaires à prévoir).'],
     ['📅', "Qu'est-ce qui est prévu ce mois-ci ?", '', "Qu'est-ce qui est prévu dans le calendrier dans les 30 prochains jours ?"]]]];
 function aiLoad() { if (S.aiFor === S.me?.id && S.ai) return; S.aiFor = S.me?.id; try { S.ai = JSON.parse(localStorage.getItem(AI_KEY()) || '[]'); } catch (e) { S.ai = []; } }
-function aiSave() { try { localStorage.setItem(AI_KEY(), JSON.stringify(S.ai.slice(-30))); } catch (e) { /* facultatif */ } }
+function aiSave() { try { localStorage.setItem(AI_KEY(), JSON.stringify(S.ai.filter((m) => !m.live).slice(-30))); } catch (e) { /* facultatif */ } }
 async function loadAiQuota() { if (!S.me) return; const r = await sb.rpc('ai_quota'); S.aiQuota = r.error ? null : r.data; paintAiHead(); }
 // Ce que l'assistant doit savoir : seulement ce que le chef voit déjà dans l'appli
 function aiContext() {
@@ -2746,28 +2746,52 @@ async function aiSend(text) {
   if (S.aiBusy) return;
   if (S.aiQuota && S.aiQuota.remaining <= 0) return toast(`Vous avez utilisé vos ${S.aiQuota.limit} questions d'aujourd'hui. À demain !`);
   S.ai.push({ role: 'user', text }); S.aiBusy = true; aiSave(); paintAi();
-  let out = {}, ok = false;
+  let out = {}, ok = false, live = null;
   try {
     const { data } = await sb.auth.getSession();
     const r = await fetch(`${SUPABASE_URL}/functions/v1/assistant`, { method: 'POST',
       headers: { Authorization: `Bearer ${data.session?.access_token}`, apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: S.ai.filter((m) => !m.err).slice(-12).map(({ role, text }) => ({ role, text })), context: aiContext() }) });
-    out = await r.json().catch(() => ({})); ok = r.ok;
-    if (!ok && r.status === 404) out.error = 'absente';
-  } catch (e) { out = { error: 'reseau' }; }
+    aiWarmAt = Date.now();
+    if (r.ok && /ndjson/.test(r.headers.get('Content-Type') || '')) {
+      // Réponse en direct : le texte s'affiche au fur et à mesure qu'il arrive
+      const rd = r.body.pipeThrough(new TextDecoderStream()).getReader(); let buf = '';
+      for (;;) {
+        const { value, done } = await rd.read(); if (done) break; buf += value;
+        let i; while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1); let d; try { d = JSON.parse(line); } catch (e) { continue; }
+          if (d.t) { if (!live) { live = { role: 'model', text: '', live: true }; S.ai.push(live); paintAi(); } live.text += d.t; aiPaintLive(live); }
+          if (d.done) { ok = true; out = d; } if (d.error) out = d;
+        }
+      }
+      if (live) { delete live.live; if (!ok) { ok = true; out = {}; } }
+    } else { out = await r.json().catch(() => ({})); ok = r.ok; if (ok) S.ai.push({ role: 'model', text: out.text }); }
+    if (!r.ok && r.status === 404) out.error = 'absente';
+    if (!ok && !out.error && [504, 546].includes(r.status)) out.error = 'lent';
+    if (!ok && !out.error) out.error = `${r.status}${out.message || out.msg || out.code ? ' : ' + (out.message || out.msg || out.code) : ''}`; // erreur de Supabase avant la fonction
+  } catch (e) { if (live) { delete live.live; ok = true; } else out = { error: 'reseau' }; }
   S.aiBusy = false;
-  if (ok) { S.ai.push({ role: 'model', text: out.text }); S.aiQuota = { remaining: out.remaining, limit: out.limit }; }
+  if (ok) { if (out.limit) S.aiQuota = { remaining: out.remaining, limit: out.limit }; }
   else {
     const msg = { quota: `Vous avez utilisé vos ${out.limit || ''} questions d'aujourd'hui. À demain !`, quota_global: "L'assistant a atteint sa limite pour aujourd'hui (formule gratuite). Il revient demain.",
       gemini_occupe: "Gemini est très demandé en ce moment. Réessayez dans une minute.", cle_absente: "La clé Gemini n'est pas encore enregistrée dans Supabase (secret GEMINI_API_KEY).",
       cle_refusee: 'Google a refusé la clé Gemini : vérifiez le secret GEMINI_API_KEY dans Supabase.', sql_absent: "Lancez d'abord la mise à jour SQL 22 dans Supabase.",
       absente: "La fonction « assistant » n'est pas encore installée dans Supabase (voir le README).", bloque: "Je ne peux pas répondre à cette demande. Essayez de la formuler autrement.",
-      reseau: 'Pas de connexion internet. Réessayez.' }[out.error] || `Je n'ai pas pu répondre (${out.error || 'erreur'}). Réessayez.`;
+      reseau: 'Pas de connexion internet. Réessayez.', vide: "Gemini n'a rien répondu. Réessayez.", lent: "L'assistant a mis trop de temps à répondre. Réessayez." }[out.error] || `Je n'ai pas pu répondre (${out.error || 'erreur'}). Réessayez.`;
     S.ai.push({ role: 'model', text: msg, err: true });
     if (out.error === 'quota') S.aiQuota = { remaining: 0, limit: out.limit };
   }
   aiSave(); paintAi();
 }
+// Affichage de la réponse pendant qu'elle arrive (une fois par image, sans redessiner le reste)
+let aiFrame = 0;
+function aiPaintLive(m) {
+  if (aiFrame) return;
+  aiFrame = requestAnimationFrame(() => { aiFrame = 0; const els = document.querySelectorAll('#aimsgs .aib'), el = els[els.length - 1]; if (el && m.live) el.innerHTML = aiMd(m.text.replace(/\[\[[^\]\n]*$/, '')); });
+}
+// La fonction Supabase met ~1 s à démarrer quand elle dort : on la réveille dès l'ouverture de l'assistant
+let aiWarmAt = 0;
+function aiWarm() { if (Date.now() - aiWarmAt < 4 * 60000) return; aiWarmAt = Date.now(); fetch(`${SUPABASE_URL}/functions/v1/assistant`, { headers: { apikey: SUPABASE_KEY } }).catch(() => {}); }
 // Mise en forme simple de la réponse (titres, listes, gras), sans jamais insérer de HTML venu de l'IA
 function aiMd(src) {
   const inl = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -2793,8 +2817,8 @@ function aiMsgsHtml() {
   const last = S.ai.length - 1;
   return S.ai.map((m, i) => m.role === 'user' ? `<div class="aime">${esc(m.text)}</div>`
     : `<div class="aiai"><span class="aico sm">${ico('spark')}</span><div class="aib${m.err ? ' err' : ''}">${m.err ? esc(m.text) : aiMd(m.text)}</div></div>
-      ${m.err ? '' : `<div class="aiacts"><button type="button" class="pri" data-aishare="${i}">↗ Envoyer dans une discussion</button><button type="button" data-aicopy="${i}">${ico('copy', 14)} Copier</button>${i === last ? '<button type="button" data-aiagain>↻ Autre idée</button>' : ''}</div>`}`).join('')
-    + (S.aiBusy ? `<div class="aiai"><span class="aico sm">${ico('spark')}</span><div class="aib"><span class="aidots"><i></i><i></i><i></i></span></div></div>` : '');
+      ${m.err || m.live ? '' : `<div class="aiacts"><button type="button" class="pri" data-aishare="${i}">↗ Envoyer dans une discussion</button><button type="button" data-aicopy="${i}">${ico('copy', 14)} Copier</button>${i === last ? '<button type="button" data-aiagain>↻ Autre idée</button>' : ''}</div>`}`).join('')
+    + (S.aiBusy && !S.ai[last]?.live ? `<div class="aiai"><span class="aico sm">${ico('spark')}</span><div class="aib"><span class="aidots"><i></i><i></i><i></i></span></div></div>` : '');
 }
 const aiHeadHtml = () => `<span class="aico">${ico('spark')}</span><span class="aiht"><b>Assistant</b><small>Gemini · ${quotaTxt()}</small></span>${S.ai.length ? '<button type="button" class="ainew" data-ainew>+ Nouvelle</button>' : ''}`;
 function paintAiHead() { const h = $('#aihead'); if (h) h.innerHTML = aiHeadHtml(); }
@@ -2807,7 +2831,7 @@ function paintAi() {
 }
 function aiGrow() { const i = $('#aiIn'); if (!i) return; i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 140) + 'px'; }
 function vAssistant() {
-  aiLoad(); if (S.aiQuota === undefined) { S.aiQuota = null; loadAiQuota(); }
+  aiLoad(); aiWarm(); if (S.aiQuota === undefined) { S.aiQuota = null; loadAiQuota(); }
   return `<div class="view aiview"><div class="aihead" id="aihead">${aiHeadHtml()}</div>
     <div class="aimsgs" id="aimsgs">${aiMsgsHtml()}</div>
     <form class="aicomp" id="aiForm"><textarea id="aiIn" rows="1" maxlength="2000" placeholder="Posez votre question…" aria-label="Votre question"></textarea>
@@ -2815,6 +2839,7 @@ function vAssistant() {
 }
 function aiCard() {
   if (!S.me) return '';
+  setTimeout(aiWarm, 1500); // réveille l'assistant pendant qu'on regarde l'accueil
   return `<button class="aicard" data-v="assistant"><span class="aico">${ico('spark')}</span><span><b>Demander à l'assistant</b><small>Idées d'activités, annonces, questions sur l'appli…</small></span><span class="go">›</span></button>`;
 }
 // Envoyer une réponse dans une conversation : le texte est placé dans le champ, à relire avant d'envoyer

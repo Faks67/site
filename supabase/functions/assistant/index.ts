@@ -2,6 +2,7 @@
 // La clé Gemini reste ici, jamais dans le site. Seuls les chefs et cheftaines connectés peuvent l'utiliser,
 // dans la limite de questions par jour fixée par la mise à jour SQL 22 (public.ai_limits).
 // Les conversations ne sont pas enregistrées : le site envoie les derniers messages à chaque question.
+// La réponse est envoyée au fur et à mesure (le site l'affiche pendant qu'elle s'écrit).
 //
 // À créer dans Supabase : Edge Functions > Deploy a new function > Via Editor,
 // nom « assistant », coller ce fichier, puis Deploy. Laisser « Verify JWT » désactivé (la fonction vérifie elle-même).
@@ -38,7 +39,7 @@ Tu aides les chefs à :
 - comprendre l'application.
 
 Règles :
-- Réponds en français, chaleureusement et clairement. Mets en forme en Markdown simple : titres ###, listes, **gras**. Pas de tableaux. Reste concis (environ 250 mots au plus) sauf si on te demande un programme détaillé.
+- Réponds en français, chaleureusement et clairement. Mets en forme en Markdown simple : titres ###, listes, **gras**. Pas de tableaux. Va droit au but : environ 200 mots au plus, sauf si on te demande un programme détaillé.
 - Religion : tu peux raconter de façon générale et consensuelle la vie des prophètes et des Ahlul Bayt (as), le sens des fêtes et des valeurs, pour une veillée ou une activité. Mais tu ne donnes JAMAIS d'avis juridique (fiqh : halal/haram, validité d'une prière ou d'un jeûne, purification…) : explique gentiment qu'il vaut mieux demander au responsable religieux ou au bureau de son marja' (par exemple sistani.org). N'invente jamais de verset, de hadith ou de référence ; si tu en évoques un, reste général et conseille de vérifier. Évite les sujets polémiques.
 - Sécurité des enfants d'abord : encadrement suffisant, premiers secours, autorisations des parents, météo.
 - Ne demande pas d'informations personnelles sur les enfants (noms, santé…) ; si on t'en donne, ne les répète pas.
@@ -48,22 +49,40 @@ ${APP_HELP}`;
 
 type Msg = { role: 'user' | 'model'; text: string };
 
-async function gemini(key: string, model: string, contents: unknown, system: string) {
-  return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { temperature: 0.8, maxOutputTokens: 4096 } })
-  });
+// Réflexion réduite au minimum : la réponse commence bien plus vite.
+// Si le modèle refuse un réglage, on essaie le suivant (et on retient celui qui marche).
+const THINK: (Record<string, string> | null)[] = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
+let thinkOk = 0;
+async function gemini(key: string, contents: unknown, system: string) {
+  for (const model of [MODEL, FALLBACK]) {
+    for (let i = thinkOk; i < THINK.length; i++) {
+      const generationConfig = { temperature: 0.8, maxOutputTokens: 4096, ...(THINK[i] ? { thinkingConfig: THINK[i] } : {}) };
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig })
+      });
+      if (r.status === 404) break; // modèle inconnu : on passe au suivant
+      if (r.status === 400 && THINK[i]) { const t = await r.text(); if (/think/i.test(t)) continue; return new Response(t, { status: 400 }); }
+      if (r.ok) thinkOk = i;
+      return r;
+    }
+  }
+  return new Response('{}', { status: 404 });
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  if (req.method === 'GET') return json({ ok: true }); // réveil de la fonction par le site
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-    const { data: auth } = await admin.auth.getUser(token);
-    if (!auth?.user) return json({ error: 'non connecté' }, 401);
-    const { data: me } = await admin.from('members').select('id, first_name, title').eq('user_id', auth.user.id).maybeSingle();
+    // Vérification du jeton et recherche du chef en même temps (le chef n'est gardé que si le jeton est valide)
+    let sub = '';
+    try { sub = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub || ''; } catch { /* jeton illisible */ }
+    const [{ data: auth }, { data: me }] = await Promise.all([admin.auth.getUser(token),
+      admin.from('members').select('id, first_name, title').eq('user_id', sub || '00000000-0000-0000-0000-000000000000').maybeSingle()]);
+    if (!auth?.user || auth.user.id !== sub) return json({ error: 'non connecté' }, 401);
     if (!me) return json({ error: 'accès refusé' }, 403);
     const key = (Deno.env.get('GEMINI_API_KEY') || '').trim();
     if (!key) return json({ error: 'cle_absente' }, 503);
@@ -82,21 +101,38 @@ Deno.serve(async (req) => {
 
     const system = `${SYSTEM}\n\nDonnées de l'application au moment de la question :\nChef qui te parle : ${me.title || ''} ${me.first_name || ''}\n${context}`;
     const contents = msgs.map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
-    let r = await gemini(key, MODEL, contents, system);
-    if (r.status === 404) r = await gemini(key, FALLBACK, contents, system);
-    const out = await r.json().catch(() => ({}));
-    if (!r.ok) {
+    const r = await gemini(key, contents, system);
+    if (!r.ok || !r.body) {
       await admin.rpc('ai_refund', { p_member: me.id });
-      console.error('Gemini', r.status, JSON.stringify(out).slice(0, 500));
+      console.error('Gemini', r.status, (await r.text().catch(() => '')).slice(0, 500));
       return json({ error: r.status === 429 ? 'gemini_occupe' : r.status === 400 || r.status === 403 ? 'cle_refusee' : `Gemini a répondu ${r.status}` }, r.status === 429 ? 429 : 502);
     }
-    const cand = out.candidates?.[0];
-    const text = (cand?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || '').join('').trim();
-    if (!text) {
-      await admin.rpc('ai_refund', { p_member: me.id });
-      return json({ error: cand?.finishReason === 'SAFETY' || out.promptFeedback?.blockReason ? 'bloque' : 'vide' }, 502);
-    }
-    return json({ text, remaining: take.data.remaining, limit: take.data.limit });
+    // Réponse en direct : une ligne JSON par morceau de texte, puis une ligne de fin
+    const enc = new TextEncoder(), line = (o: unknown) => enc.encode(JSON.stringify(o) + '\n');
+    const stream = new ReadableStream({
+      async start(ctl) {
+        const rd = r.body!.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = '', any = false, blocked = false;
+        try {
+          for (;;) {
+            const { value, done } = await rd.read(); if (done) break; buf += value;
+            let i; while ((i = buf.indexOf('\n')) >= 0) {
+              const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+              if (!l.startsWith('data:')) continue;
+              let d; try { d = JSON.parse(l.slice(5)); } catch { continue; }
+              const c = d.candidates?.[0];
+              const t = (c?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || '').join('');
+              if (t) { any = true; ctl.enqueue(line({ t })); }
+              if (c?.finishReason === 'SAFETY' || d.promptFeedback?.blockReason) blocked = true;
+            }
+          }
+        } catch (e) { console.error('flux Gemini', e); }
+        if (any) ctl.enqueue(line({ done: true, remaining: take.data.remaining, limit: take.data.limit }));
+        else { await admin.rpc('ai_refund', { p_member: me.id }); ctl.enqueue(line({ error: blocked ? 'bloque' : 'vide' })); }
+        ctl.close();
+      }
+    });
+    return new Response(stream, { headers: { ...cors, 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-cache' } });
   } catch (e) {
     console.error(e);
     return json({ error: (e as Error).message }, 500);
