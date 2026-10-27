@@ -1,0 +1,1402 @@
+[
+ {
+  "n": 1,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Combien de prières obligatoires un musulman accomplit-il chaque jour ?",
+  "choix": [
+   "5",
+   "7",
+   "4",
+   "3"
+  ],
+  "reponse": 0,
+  "explication": "Les cinq prières quotidiennes : l'aube (fajr), le midi (dhuhr), l'après-midi ('asr), le coucher du soleil (maghrib) et la nuit ('isha)."
+ },
+ {
+  "n": 2,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Combien d'unités (rak'a) compte la prière de l'aube (fajr) ?",
+  "choix": [
+   "2",
+   "1",
+   "4",
+   "3"
+  ],
+  "reponse": 0,
+  "explication": "La prière du fajr compte 2 rak'a."
+ },
+ {
+  "n": 3,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Combien d'unités (rak'a) compte la prière du maghrib ?",
+  "choix": [
+   "2",
+   "4",
+   "3",
+   "5"
+  ],
+  "reponse": 2,
+  "explication": "La prière du maghrib est la seule prière quotidienne de 3 rak'a."
+ },
+ {
+  "n": 4,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Au total, combien de rak'a obligatoires compte une journée de prières (hors voyage) ?",
+  "choix": [
+   "21",
+   "19",
+   "15",
+   "17"
+  ],
+  "reponse": 3,
+  "explication": "2 (fajr) + 4 (dhuhr) + 4 ('asr) + 3 (maghrib) + 4 ('isha) = 17 rak'a."
+ },
+ {
+  "n": 5,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Vers quel lieu les musulmans se tournent-ils pour prier ?",
+  "choix": [
+   "Al-Aqsa",
+   "Le mont Arafat",
+   "La Ka'ba",
+   "La mosquée du Prophète"
+  ],
+  "reponse": 2,
+  "explication": "La qibla est la Ka'ba, à La Mecque."
+ },
+ {
+  "n": 6,
+  "niveau": 1,
+  "theme": "Prière",
+  "question": "Quelle sourate récite-t-on obligatoirement dans chaque prière ?",
+  "choix": [
+   "Al-Kawthar",
+   "Al-Fatiha",
+   "Al-Ikhlas",
+   "Yasin"
+  ],
+  "reponse": 1,
+  "explication": "La sourate Al-Fatiha est récitée dans chaque prière."
+ },
+ {
+  "n": 7,
+  "niveau": 1,
+  "theme": "Purification",
+  "question": "Que doit-on faire avant la prière si l'on n'a pas les ablutions ?",
+  "choix": [
+   "Rien",
+   "Faire les ablutions (wudu)",
+   "Se parfumer",
+   "Réciter une sourate"
+  ],
+  "reponse": 1,
+  "explication": "Les ablutions (wudu) sont une condition de validité de la prière."
+ },
+ {
+  "n": 8,
+  "niveau": 1,
+  "theme": "Purification",
+  "question": "Que fait-on à la place des ablutions quand il n'y a pas d'eau ou qu'on ne peut pas l'utiliser ?",
+  "choix": [
+   "Le tayammum",
+   "On reporte la prière au lendemain",
+   "Le ghusl",
+   "Rien"
+  ],
+  "reponse": 0,
+  "explication": "Le tayammum, fait avec de la terre pure, remplace les ablutions quand l'eau manque ou ne peut pas être utilisée."
+ },
+ {
+  "n": 9,
+  "niveau": 1,
+  "theme": "Jeûne",
+  "question": "Pendant quel mois les musulmans jeûnent-ils obligatoirement ?",
+  "choix": [
+   "Rajab",
+   "Sha'ban",
+   "Ramadan",
+   "Muharram"
+  ],
+  "reponse": 2,
+  "explication": "Le jeûne du mois de Ramadan est obligatoire (Coran 2:183-185)."
+ },
+ {
+  "n": 10,
+  "niveau": 1,
+  "theme": "Jeûne",
+  "question": "Ramadan est le combientième mois du calendrier hégirien ?",
+  "choix": [
+   "10e",
+   "8e",
+   "7e",
+   "9e"
+  ],
+  "reponse": 3,
+  "explication": "Ramadan est le 9e mois du calendrier lunaire hégirien."
+ },
+ {
+  "n": 11,
+  "niveau": 1,
+  "theme": "Jeûne",
+  "question": "Selon le Coran, durant quel mois se trouve la Nuit du Destin (Laylat al-Qadr) ?",
+  "choix": [
+   "Sha'ban",
+   "Ramadan",
+   "Dhul-Hijja",
+   "Rajab"
+  ],
+  "reponse": 1,
+  "explication": "Le Coran a été descendu durant le mois de Ramadan (2:185) et durant la Nuit du Destin (97:1)."
+ },
+ {
+  "n": 12,
+  "niveau": 1,
+  "theme": "Jeûne",
+  "question": "Quelle fête marque la fin du mois de Ramadan ?",
+  "choix": [
+   "Le Ghadir",
+   "L'Aïd al-Fitr",
+   "L'Aïd al-Adha",
+   "Le Mawlid"
+  ],
+  "reponse": 1,
+  "explication": "L'Aïd al-Fitr est célébré le 1er jour du mois de Shawwal."
+ },
+ {
+  "n": 13,
+  "niveau": 1,
+  "theme": "Pèlerinage",
+  "question": "Dans quelle ville se déroule le pèlerinage (Hajj) ?",
+  "choix": [
+   "Médine",
+   "Kerbala",
+   "Jérusalem",
+   "La Mecque"
+  ],
+  "reponse": 3,
+  "explication": "Le Hajj se déroule à La Mecque et dans ses environs (Arafat, Muzdalifa, Mina)."
+ },
+ {
+  "n": 14,
+  "niveau": 1,
+  "theme": "Pèlerinage",
+  "question": "Combien de tours fait-on autour de la Ka'ba lors du tawaf ?",
+  "choix": [
+   "10",
+   "7",
+   "5",
+   "3"
+  ],
+  "reponse": 1,
+  "explication": "Le tawaf comporte 7 tours autour de la Ka'ba."
+ },
+ {
+  "n": 15,
+  "niveau": 1,
+  "theme": "Pèlerinage",
+  "question": "Entre quelles collines fait-on le parcours (sa'y) lors du pèlerinage ?",
+  "choix": [
+   "Mina et Muzdalifa",
+   "Hira et Thawr",
+   "Uhud et Arafat",
+   "Safa et Marwa"
+  ],
+  "reponse": 3,
+  "explication": "Le sa'y se fait 7 fois entre Safa et Marwa, en souvenir de Hajar cherchant de l'eau pour Isma'il."
+ },
+ {
+  "n": 16,
+  "niveau": 1,
+  "theme": "Pèlerinage",
+  "question": "Pendant quel mois a lieu le pèlerinage (Hajj) ?",
+  "choix": [
+   "Ramadan",
+   "Muharram",
+   "Dhul-Hijja",
+   "Safar"
+  ],
+  "reponse": 2,
+  "explication": "Le Hajj a lieu au mois de Dhul-Hijja, le 12e mois du calendrier hégirien."
+ },
+ {
+  "n": 17,
+  "niveau": 1,
+  "theme": "Pèlerinage",
+  "question": "Quel prophète a construit la Ka'ba avec son fils Isma'il ?",
+  "choix": [
+   "Nuh",
+   "Ibrahim",
+   "Musa",
+   "Dawud"
+  ],
+  "reponse": 1,
+  "explication": "Le Coran rapporte qu'Ibrahim et Isma'il élevèrent les fondations de la Maison (2:127)."
+ },
+ {
+  "n": 18,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Combien de sourates compte le Coran ?",
+  "choix": [
+   "110",
+   "120",
+   "114",
+   "99"
+  ],
+  "reponse": 2,
+  "explication": "Le Coran compte 114 sourates."
+ },
+ {
+  "n": 19,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quelle est la plus longue sourate du Coran ?",
+  "choix": [
+   "Yasin",
+   "An-Nisa",
+   "Al-Baqara",
+   "Al-'Imran"
+  ],
+  "reponse": 2,
+  "explication": "Al-Baqara (la Vache), 2e sourate, est la plus longue avec 286 versets."
+ },
+ {
+  "n": 20,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quelle est la plus courte sourate du Coran ?",
+  "choix": [
+   "Al-Kawthar",
+   "Al-Ikhlas",
+   "Al-'Asr",
+   "An-Nas"
+  ],
+  "reponse": 0,
+  "explication": "Al-Kawthar compte 3 versets."
+ },
+ {
+  "n": 21,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quel fut le premier mot révélé au Prophète Muhammad ﷺ ?",
+  "choix": [
+   "Iqra' (Lis)",
+   "Qul (Dis)",
+   "Bismillah",
+   "Al-hamdu"
+  ],
+  "reponse": 0,
+  "explication": "Les premiers versets révélés commencent par « Iqra' » (Lis), sourate Al-'Alaq (96:1)."
+ },
+ {
+  "n": 22,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Dans quelle grotte le Prophète ﷺ a-t-il reçu la première révélation ?",
+  "choix": [
+   "Thawr",
+   "Hira",
+   "Uhud",
+   "Arafat"
+  ],
+  "reponse": 1,
+  "explication": "La première révélation eut lieu dans la grotte de Hira, près de La Mecque."
+ },
+ {
+  "n": 23,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quel ange a transmis la révélation au Prophète ﷺ ?",
+  "choix": [
+   "Mika'il",
+   "Israfil",
+   "'Izra'il",
+   "Jibra'il"
+  ],
+  "reponse": 3,
+  "explication": "L'ange Jibra'il (Gabriel) a transmis le Coran au Prophète ﷺ."
+ },
+ {
+  "n": 24,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quelle sourate ne commence pas par « Bismillah ar-Rahman ar-Rahim » ?",
+  "choix": [
+   "Al-Fatiha",
+   "At-Tawba",
+   "Yasin",
+   "Al-Baqara"
+  ],
+  "reponse": 1,
+  "explication": "La sourate At-Tawba (9) est la seule à ne pas commencer par la basmala."
+ },
+ {
+  "n": 25,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Dans quelle sourate se trouve le Verset du Trône (Ayat al-Kursi) ?",
+  "choix": [
+   "Al-Mulk",
+   "Al-Baqara",
+   "Al-Kahf",
+   "Ar-Rahman"
+  ],
+  "reponse": 1,
+  "explication": "Ayat al-Kursi est le verset 255 de la sourate Al-Baqara."
+ },
+ {
+  "n": 26,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Combien de versets compte la sourate Al-Fatiha ?",
+  "choix": [
+   "8",
+   "5",
+   "6",
+   "7"
+  ],
+  "reponse": 3,
+  "explication": "Al-Fatiha compte 7 versets, d'où son nom « les sept versets répétés »."
+ },
+ {
+  "n": 27,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quelle sourate porte le nom d'une femme ?",
+  "choix": [
+   "Al-Mujadila",
+   "Fatir",
+   "Al-Mumtahana",
+   "Maryam"
+  ],
+  "reponse": 3,
+  "explication": "La sourate Maryam (19) porte le nom de la mère du Prophète 'Isa."
+ },
+ {
+  "n": 28,
+  "niveau": 1,
+  "theme": "Coran",
+  "question": "Quelle sourate résume le tawhid (l'unicité de Dieu) : « Dis : Il est Allah, Unique » ?",
+  "choix": [
+   "An-Nas",
+   "Al-Falaq",
+   "Al-Ikhlas",
+   "Al-Kafirun"
+  ],
+  "reponse": 2,
+  "explication": "La sourate Al-Ikhlas (112) décrit l'unicité absolue de Dieu."
+ },
+ {
+  "n": 29,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel est le dernier des prophètes ?",
+  "choix": [
+   "'Isa",
+   "Musa",
+   "Ibrahim",
+   "Muhammad ﷺ"
+  ],
+  "reponse": 3,
+  "explication": "Muhammad ﷺ est le Sceau des prophètes (Coran 33:40)."
+ },
+ {
+  "n": 30,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète a construit l'arche ?",
+  "choix": [
+   "Nuh",
+   "Hud",
+   "Salih",
+   "Lut"
+  ],
+  "reponse": 0,
+  "explication": "Le Prophète Nuh a construit l'arche sur ordre de Dieu."
+ },
+ {
+  "n": 31,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète a été avalé par un grand poisson ?",
+  "choix": [
+   "Yunus",
+   "Yusuf",
+   "Ayyub",
+   "Idris"
+  ],
+  "reponse": 0,
+  "explication": "Le Prophète Yunus a été avalé par un grand poisson, puis sauvé par son invocation."
+ },
+ {
+  "n": 32,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète a reçu la Torah (Tawrat) ?",
+  "choix": [
+   "'Isa",
+   "Ibrahim",
+   "Dawud",
+   "Musa"
+  ],
+  "reponse": 3,
+  "explication": "La Torah a été révélée au Prophète Musa."
+ },
+ {
+  "n": 33,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète comprenait le langage des fourmis et des oiseaux ?",
+  "choix": [
+   "Shu'ayb",
+   "Zakariyya",
+   "Yahya",
+   "Sulayman"
+  ],
+  "reponse": 3,
+  "explication": "Le Coran raconte que Sulayman comprenait le langage des oiseaux et entendit une fourmi (sourate An-Naml)."
+ },
+ {
+  "n": 34,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète a été jeté dans le feu, qui est devenu fraîcheur et paix ?",
+  "choix": [
+   "Nuh",
+   "Ibrahim",
+   "Musa",
+   "Isma'il"
+  ],
+  "reponse": 1,
+  "explication": "« Ô feu, sois fraîcheur et paix pour Ibrahim » (Coran 21:69)."
+ },
+ {
+  "n": 35,
+  "niveau": 1,
+  "theme": "Prophètes",
+  "question": "Quel prophète a été vendu par ses frères puis est devenu ministre en Égypte ?",
+  "choix": [
+   "Yahya",
+   "Harun",
+   "Yusuf",
+   "Ya'qub"
+  ],
+  "reponse": 2,
+  "explication": "L'histoire de Yusuf est racontée dans la sourate qui porte son nom (12)."
+ },
+ {
+  "n": 36,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Comment s'appelait la mère du Prophète Muhammad ﷺ ?",
+  "choix": [
+   "Halima",
+   "Khadija",
+   "Amina",
+   "Fatima"
+  ],
+  "reponse": 2,
+  "explication": "Sa mère était Amina bint Wahb ; son père, 'Abdullah, est décédé avant sa naissance."
+ },
+ {
+  "n": 37,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Quel oncle a élevé et protégé le Prophète ﷺ après la mort de son grand-père ?",
+  "choix": [
+   "Abu Talib",
+   "'Abbas",
+   "Hamza",
+   "Abu Lahab"
+  ],
+  "reponse": 0,
+  "explication": "Abu Talib, père de l'Imam 'Ali, a élevé et protégé le Prophète ﷺ."
+ },
+ {
+  "n": 38,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Qui fut la première épouse du Prophète ﷺ ?",
+  "choix": [
+   "Umm Salama",
+   "Sawda",
+   "Zaynab",
+   "Khadija"
+  ],
+  "reponse": 3,
+  "explication": "Khadija bint Khuwaylid fut sa première épouse et soutint la mission dès le début."
+ },
+ {
+  "n": 39,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "À quel âge le Prophète ﷺ a-t-il reçu la première révélation ?",
+  "choix": [
+   "40 ans",
+   "33 ans",
+   "53 ans",
+   "25 ans"
+  ],
+  "reponse": 0,
+  "explication": "La mission prophétique a commencé à l'âge de 40 ans."
+ },
+ {
+  "n": 40,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Quel était l'ancien nom de la ville de Médine ?",
+  "choix": [
+   "Yathrib",
+   "Badr",
+   "Khaybar",
+   "Taïf"
+  ],
+  "reponse": 0,
+  "explication": "Médine s'appelait Yathrib avant l'arrivée du Prophète ﷺ."
+ },
+ {
+  "n": 41,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "En quelle année de l'ère chrétienne a eu lieu l'Hégire vers Médine ?",
+  "choix": [
+   "632",
+   "622",
+   "570",
+   "610"
+  ],
+  "reponse": 1,
+  "explication": "L'Hégire a eu lieu en 622 ; elle marque le début du calendrier musulman."
+ },
+ {
+  "n": 42,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Quelle fut la première grande bataille des musulmans, en l'an 2 de l'Hégire ?",
+  "choix": [
+   "Uhud",
+   "Badr",
+   "Hunayn",
+   "Khandaq"
+  ],
+  "reponse": 1,
+  "explication": "La bataille de Badr eut lieu en l'an 2 de l'Hégire."
+ },
+ {
+  "n": 43,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Qui fut le premier muezzin de l'islam ?",
+  "choix": [
+   "Abu Dharr",
+   "'Ammar",
+   "Salman",
+   "Bilal"
+  ],
+  "reponse": 3,
+  "explication": "Bilal ibn Rabah fut le premier à faire l'appel à la prière."
+ },
+ {
+  "n": 44,
+  "niveau": 1,
+  "theme": "Vie du Prophète",
+  "question": "Lors du voyage nocturne (Isra'), de quelle mosquée à quelle mosquée le Prophète ﷺ fut-il transporté ?",
+  "choix": [
+   "De La Mecque (al-Haram) à al-Aqsa",
+   "De Médine à La Mecque",
+   "De Quba à Médine",
+   "D'al-Aqsa à Médine"
+  ],
+  "reponse": 0,
+  "explication": "« Gloire à Celui qui a fait voyager de nuit Son serviteur de la Mosquée sacrée à la Mosquée al-Aqsa » (17:1)."
+ },
+ {
+  "n": 45,
+  "niveau": 1,
+  "theme": "Croyance",
+  "question": "Quel ange soufflera dans la trompe au Jour du Jugement ?",
+  "choix": [
+   "Israfil",
+   "Jibra'il",
+   "Malik",
+   "Mika'il"
+  ],
+  "reponse": 0,
+  "explication": "L'ange Israfil est chargé de souffler dans la trompe."
+ },
+ {
+  "n": 46,
+  "niveau": 1,
+  "theme": "Comportement",
+  "question": "Selon le Coran, comment doit-on se comporter envers ses parents ?",
+  "choix": [
+   "Aucune consigne",
+   "Seulement les écouter",
+   "Avec bonté, sans même dire « ouf »",
+   "Les respecter s'ils sont musulmans"
+  ],
+  "reponse": 2,
+  "explication": "« Ne leur dis pas même “ouf”, ne les brusque pas, et adresse-leur des paroles respectueuses » (17:23)."
+ },
+ {
+  "n": 47,
+  "niveau": 1,
+  "theme": "Comportement",
+  "question": "Comment s'appelle le fait de parler en mal d'une personne absente ?",
+  "choix": [
+   "L'orgueil",
+   "La jalousie",
+   "La médisance (ghiba)",
+   "Le mensonge"
+  ],
+  "reponse": 2,
+  "explication": "La médisance est comparée dans le Coran au fait de manger la chair de son frère mort (49:12)."
+ },
+ {
+  "n": 48,
+  "niveau": 1,
+  "theme": "Comportement",
+  "question": "Quelle formule dit-on avant de commencer une action ?",
+  "choix": [
+   "Subhan Allah",
+   "Al-hamdu lillah",
+   "Bismillah",
+   "Allahu akbar"
+  ],
+  "reponse": 2,
+  "explication": "On commence par « Bismillah » : au nom de Dieu."
+ },
+ {
+  "n": 49,
+  "niveau": 1,
+  "theme": "Calendrier",
+  "question": "Quel est le premier mois du calendrier hégirien ?",
+  "choix": [
+   "Muharram",
+   "Ramadan",
+   "Safar",
+   "Rajab"
+  ],
+  "reponse": 0,
+  "explication": "Muharram est le premier mois de l'année hégirienne."
+ },
+ {
+  "n": 50,
+  "niveau": 1,
+  "theme": "Calendrier",
+  "question": "Le calendrier musulman est basé sur…",
+  "choix": [
+   "Les saisons",
+   "Les étoiles",
+   "La lune",
+   "Le soleil"
+  ],
+  "reponse": 2,
+  "explication": "C'est un calendrier lunaire de 12 mois, environ 11 jours plus court que l'année solaire."
+ },
+ {
+  "n": 51,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Combien y a-t-il d'Imams dans l'école ja'farite ?",
+  "choix": [
+   "14",
+   "12",
+   "10",
+   "7"
+  ],
+  "reponse": 1,
+  "explication": "Douze Imams, de l'Imam 'Ali à l'Imam al-Mahdi (que Dieu hâte sa venue)."
+ },
+ {
+  "n": 52,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Qui est le premier Imam ?",
+  "choix": [
+   "L'Imam Husayn",
+   "L'Imam 'Ali",
+   "L'Imam as-Sajjad",
+   "L'Imam Hasan"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam 'Ali ibn Abi Talib, Amir al-Mu'minin."
+ },
+ {
+  "n": 53,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Où est né l'Imam 'Ali ?",
+  "choix": [
+   "À Médine",
+   "Dans la Ka'ba",
+   "À Taïf",
+   "À Kufa"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam 'Ali est né à l'intérieur de la Ka'ba, le 13 Rajab."
+ },
+ {
+  "n": 54,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quelle est la date de naissance de l'Imam 'Ali ?",
+  "choix": [
+   "15 Ramadan",
+   "13 Rajab",
+   "3 Sha'ban",
+   "18 Dhul-Hijja"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam 'Ali est né le 13 Rajab, dans la Ka'ba."
+ },
+ {
+  "n": 55,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel est le nom de l'épée célèbre de l'Imam 'Ali ?",
+  "choix": [
+   "Al-Ma'thur",
+   "Dhul-Fiqar",
+   "Al-Battar",
+   "Al-Qadib"
+  ],
+  "reponse": 1,
+  "explication": "« Il n'y a de jeune homme que 'Ali, et il n'y a d'épée que Dhul-Fiqar. »"
+ },
+ {
+  "n": 56,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Lors de quelle bataille l'Imam 'Ali arracha-t-il la porte de la forteresse ?",
+  "choix": [
+   "Hunayn",
+   "Badr",
+   "Khaybar",
+   "Uhud"
+  ],
+  "reponse": 2,
+  "explication": "À Khaybar, le Prophète ﷺ confia l'étendard à 'Ali, qui arracha la porte de la forteresse."
+ },
+ {
+  "n": 57,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Lors de quelle bataille l'Imam 'Ali affronta-t-il 'Amr ibn 'Abd Wudd ?",
+  "choix": [
+   "Khandaq (la Tranchée)",
+   "Badr",
+   "Siffin",
+   "Jamal"
+  ],
+  "reponse": 0,
+  "explication": "À la bataille de la Tranchée, l'Imam 'Ali releva le défi d'Amr ibn 'Abd Wudd."
+ },
+ {
+  "n": 58,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "À quelle date a eu lieu l'événement de Ghadir Khumm ?",
+  "choix": [
+   "18 Dhul-Hijja",
+   "10 Muharram",
+   "27 Rajab",
+   "15 Sha'ban"
+  ],
+  "reponse": 0,
+  "explication": "Le 18 Dhul-Hijja de l'an 10, au retour du pèlerinage d'adieu."
+ },
+ {
+  "n": 59,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel recueil réunit les sermons, lettres et paroles de l'Imam 'Ali ?",
+  "choix": [
+   "Mafatih al-Jinan",
+   "Nahj al-Balagha",
+   "Al-Kafi",
+   "As-Sahifa as-Sajjadiyya"
+  ],
+  "reponse": 1,
+  "explication": "Nahj al-Balagha a été compilé par Sharif ar-Radi."
+ },
+ {
+  "n": 60,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quelle invocation l'Imam 'Ali a-t-il enseignée à son compagnon Kumayl ?",
+  "choix": [
+   "Du'a Nudba",
+   "Du'a 'Arafa",
+   "Du'a Iftitah",
+   "Du'a Kumayl"
+  ],
+  "reponse": 3,
+  "explication": "Du'a Kumayl, souvent récitée la nuit du jeudi au vendredi."
+ },
+ {
+  "n": 61,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Dans quelle ville se trouve le mausolée de l'Imam 'Ali ?",
+  "choix": [
+   "Najaf",
+   "Samarra",
+   "Kufa",
+   "Kerbala"
+  ],
+  "reponse": 0,
+  "explication": "L'Imam 'Ali est enterré à Najaf, en Irak."
+ },
+ {
+  "n": 62,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel jour du mois de Ramadan l'Imam 'Ali est-il tombé en martyr ?",
+  "choix": [
+   "19",
+   "15",
+   "21",
+   "27"
+  ],
+  "reponse": 2,
+  "explication": "Frappé à la mosquée de Kufa le 19 Ramadan, il est tombé en martyr le 21 Ramadan de l'an 40."
+ },
+ {
+  "n": 63,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Qui est la mère de l'Imam Hasan et de l'Imam Husayn ?",
+  "choix": [
+   "Fatima az-Zahra",
+   "Khadija",
+   "Umm al-Banin",
+   "Zaynab"
+  ],
+  "reponse": 0,
+  "explication": "Sayyida Fatima az-Zahra, fille du Prophète ﷺ."
+ },
+ {
+  "n": 64,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Où se trouve la tombe de Sayyida Fatima az-Zahra ?",
+  "choix": [
+   "À Kerbala",
+   "À Najaf",
+   "Son emplacement exact est inconnu",
+   "À La Mecque"
+  ],
+  "reponse": 2,
+  "explication": "Selon sa volonté, elle fut enterrée de nuit ; l'emplacement exact de sa tombe à Médine reste inconnu."
+ },
+ {
+  "n": 65,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Combien de fois dit-on « Allahu akbar » dans le tasbih de Fatima az-Zahra ?",
+  "choix": [
+   "100",
+   "35",
+   "33",
+   "34"
+  ],
+  "reponse": 3,
+  "explication": "34 « Allahu akbar », 33 « Al-hamdu lillah » et 33 « Subhan Allah »."
+ },
+ {
+  "n": 66,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Qui sont les cinq personnes réunies sous le manteau (Hadith al-Kisa') ?",
+  "choix": [
+   "Le Prophète, 'Ali, Fatima, Hasan et Husayn",
+   "Les cinq premiers Imams",
+   "Le Prophète et quatre compagnons",
+   "Le Prophète, Khadija, 'Ali, Hasan et Husayn"
+  ],
+  "reponse": 0,
+  "explication": "Les Ahl al-Kisa' : le Prophète ﷺ, l'Imam 'Ali, Sayyida Fatima, l'Imam Hasan et l'Imam Husayn."
+ },
+ {
+  "n": 67,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Dans quelle sourate se trouve le verset de la purification (Tathir) ?",
+  "choix": [
+   "Al-Kahf",
+   "Al-Baqara",
+   "Al-Ahzab",
+   "Maryam"
+  ],
+  "reponse": 2,
+  "explication": "« Allah veut seulement éloigner de vous la souillure, ô gens de la Maison… » (33:33)."
+ },
+ {
+  "n": 68,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Selon le hadith des deux poids (Thaqalayn), que le Prophète ﷺ a-t-il laissé ?",
+  "choix": [
+   "Médine et La Mecque",
+   "Le Coran et sa famille (Ahlul Bayt)",
+   "Le Coran et la Ka'ba",
+   "Le Coran et la Sunna seule"
+  ],
+  "reponse": 1,
+  "explication": "« Je laisse parmi vous deux choses précieuses : le Livre d'Allah et ma famille, les gens de ma Maison. »"
+ },
+ {
+  "n": 69,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Avec qui le Prophète ﷺ a-t-il fait la Mubahala ?",
+  "choix": [
+   "Les chrétiens de Najran",
+   "Les Perses",
+   "Les juifs de Khaybar",
+   "Les Quraysh"
+  ],
+  "reponse": 0,
+  "explication": "Il s'y présenta avec 'Ali, Fatima, Hasan et Husayn (verset 3:61)."
+ },
+ {
+  "n": 70,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel Imam a conclu un traité de paix avec Mu'awiya ?",
+  "choix": [
+   "L'Imam 'Ali",
+   "L'Imam Husayn",
+   "L'Imam Hasan",
+   "L'Imam Baqir"
+  ],
+  "reponse": 2,
+  "explication": "L'Imam Hasan al-Mujtaba a conclu ce traité pour préserver la communauté."
+ },
+ {
+  "n": 71,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Où est enterré l'Imam Hasan al-Mujtaba ?",
+  "choix": [
+   "À Kerbala",
+   "Au cimetière d'al-Baqi' à Médine",
+   "À Najaf",
+   "À Damas"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam Hasan repose au cimetière d'al-Baqi', à Médine."
+ },
+ {
+  "n": 72,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quelle est la date de naissance de l'Imam Husayn ?",
+  "choix": [
+   "10 Muharram",
+   "3 Sha'ban",
+   "13 Rajab",
+   "20 Safar"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam Husayn est né le 3 Sha'ban de l'an 4 de l'Hégire."
+ },
+ {
+  "n": 73,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Quel jour a eu lieu la tragédie de Kerbala ?",
+  "choix": [
+   "10 Muharram (Ashura)",
+   "18 Dhul-Hijja",
+   "1er Muharram",
+   "20 Safar"
+  ],
+  "reponse": 0,
+  "explication": "Le jour d'Ashura, le 10 Muharram de l'an 61."
+ },
+ {
+  "n": 74,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "En quelle année de l'Hégire a eu lieu Kerbala ?",
+  "choix": [
+   "80",
+   "61",
+   "40",
+   "50"
+  ],
+  "reponse": 1,
+  "explication": "La tragédie de Kerbala a eu lieu en l'an 61 de l'Hégire."
+ },
+ {
+  "n": 75,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Qui était le porte-étendard de l'Imam Husayn à Kerbala ?",
+  "choix": [
+   "'Ali al-Akbar",
+   "Abu al-Fadl al-'Abbas",
+   "Muslim ibn 'Aqil",
+   "Al-Hurr"
+  ],
+  "reponse": 1,
+  "explication": "Abu al-Fadl al-'Abbas, demi-frère de l'Imam Husayn, surnommé Qamar Bani Hashim."
+ },
+ {
+  "n": 76,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Qui l'Imam Husayn a-t-il envoyé à Kufa avant Kerbala ?",
+  "choix": [
+   "Habib ibn Mazahir",
+   "Muslim ibn 'Aqil",
+   "Zuhayr ibn al-Qayn",
+   "Al-'Abbas"
+  ],
+  "reponse": 1,
+  "explication": "Son cousin Muslim ibn 'Aqil, tombé en martyr à Kufa."
+ },
+ {
+  "n": 77,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Qui a prononcé le célèbre sermon à la cour de Yazid, à Damas ?",
+  "choix": [
+   "Sukayna",
+   "Rubab",
+   "Sayyida Zaynab",
+   "Umm Kulthum"
+  ],
+  "reponse": 2,
+  "explication": "Sayyida Zaynab, sœur de l'Imam Husayn, par son éloquence et son courage."
+ },
+ {
+  "n": 78,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Quel Imam était présent à Kerbala mais malade pendant la bataille ?",
+  "choix": [
+   "L'Imam as-Sajjad",
+   "L'Imam Baqir",
+   "L'Imam Sadiq",
+   "L'Imam Hasan"
+  ],
+  "reponse": 0,
+  "explication": "L'Imam 'Ali Zayn al-'Abidin as-Sajjad, fils de l'Imam Husayn."
+ },
+ {
+  "n": 79,
+  "niveau": 2,
+  "theme": "Kerbala",
+  "question": "Combien de jours après Ashura commémore-t-on l'Arba'in ?",
+  "choix": [
+   "60",
+   "30",
+   "40",
+   "7"
+  ],
+  "reponse": 2,
+  "explication": "L'Arba'in, le 20 Safar, marque le 40e jour après Ashura."
+ },
+ {
+  "n": 80,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel Imam est l'auteur des invocations d'as-Sahifa as-Sajjadiyya ?",
+  "choix": [
+   "L'Imam 'Ali",
+   "L'Imam Rida",
+   "L'Imam Sadiq",
+   "L'Imam as-Sajjad"
+  ],
+  "reponse": 3,
+  "explication": "L'Imam Zayn al-'Abidin as-Sajjad, le 4e Imam."
+ },
+ {
+  "n": 81,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel Imam est surnommé « Baqir al-'Ulum » (celui qui fend les sciences) ?",
+  "choix": [
+   "L'Imam Ja'far as-Sadiq",
+   "L'Imam Muhammad al-Baqir",
+   "L'Imam Hasan al-'Askari",
+   "L'Imam Musa al-Kazim"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam Muhammad al-Baqir, le 5e Imam."
+ },
+ {
+  "n": 82,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "L'école « ja'farite » porte le nom de quel Imam ?",
+  "choix": [
+   "L'Imam Muhammad al-Jawad",
+   "L'Imam Hasan",
+   "L'Imam 'Ali",
+   "L'Imam Ja'far as-Sadiq"
+  ],
+  "reponse": 3,
+  "explication": "L'Imam Ja'far as-Sadiq, le 6e Imam, a transmis le savoir à des milliers d'élèves."
+ },
+ {
+  "n": 83,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Où sont enterrés les Imams Hasan, as-Sajjad, al-Baqir et as-Sadiq ?",
+  "choix": [
+   "Au cimetière d'al-Baqi' (Médine)",
+   "À Samarra",
+   "À Kazimiya",
+   "À Mashhad"
+  ],
+  "reponse": 0,
+  "explication": "Ces quatre Imams reposent au cimetière d'al-Baqi', à Médine."
+ },
+ {
+  "n": 84,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel Imam est surnommé « Bab al-Hawa'ij » (la porte des besoins) ?",
+  "choix": [
+   "L'Imam 'Ali al-Hadi",
+   "L'Imam Husayn",
+   "L'Imam 'Ali ar-Rida",
+   "L'Imam Musa al-Kazim"
+  ],
+  "reponse": 3,
+  "explication": "L'Imam Musa al-Kazim, le 7e Imam, longtemps emprisonné sous Harun ar-Rashid."
+ },
+ {
+  "n": 85,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Dans quelle ville se trouve le mausolée de l'Imam 'Ali ar-Rida ?",
+  "choix": [
+   "Samarra",
+   "Mashhad",
+   "Bagdad",
+   "Qom"
+  ],
+  "reponse": 1,
+  "explication": "L'Imam ar-Rida, le 8e Imam, repose à Mashhad, en Iran."
+ },
+ {
+  "n": 86,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Qui est enterrée à Qom ?",
+  "choix": [
+   "Sayyida Fatima al-Ma'suma",
+   "Sayyida Zaynab",
+   "Umm al-Banin",
+   "Sayyida Ruqayya"
+  ],
+  "reponse": 0,
+  "explication": "Sayyida Fatima al-Ma'suma, sœur de l'Imam ar-Rida."
+ },
+ {
+  "n": 87,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quels Imams sont enterrés à Kazimiya (Bagdad) ?",
+  "choix": [
+   "Hasan et Husayn",
+   "Musa al-Kazim et Muhammad al-Jawad",
+   "'Ali al-Hadi et Hasan al-'Askari",
+   "Al-Baqir et as-Sadiq"
+  ],
+  "reponse": 1,
+  "explication": "Le 7e et le 9e Imam reposent à Kazimiya."
+ },
+ {
+  "n": 88,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quels Imams sont enterrés à Samarra ?",
+  "choix": [
+   "As-Sajjad et al-Baqir",
+   "'Ali al-Hadi et Hasan al-'Askari",
+   "Musa al-Kazim et Muhammad al-Jawad",
+   "'Ali et Husayn"
+  ],
+  "reponse": 1,
+  "explication": "Le 10e et le 11e Imam reposent à Samarra, en Irak."
+ },
+ {
+  "n": 89,
+  "niveau": 2,
+  "theme": "Ahlul Bayt",
+  "question": "Quel Imam est devenu Imam alors qu'il était encore enfant, vers l'âge de 8 ans ?",
+  "choix": [
+   "L'Imam as-Sajjad",
+   "L'Imam Musa al-Kazim",
+   "L'Imam Hasan al-'Askari",
+   "L'Imam Muhammad al-Jawad"
+  ],
+  "reponse": 3,
+  "explication": "L'Imam Muhammad al-Jawad (at-Taqi), le 9e Imam."
+ },
+ {
+  "n": 90,
+  "niveau": 2,
+  "theme": "Imam al-Mahdi",
+  "question": "Qui est le père de l'Imam al-Mahdi ?",
+  "choix": [
+   "L'Imam Hasan al-'Askari",
+   "L'Imam Muhammad al-Jawad",
+   "L'Imam 'Ali al-Hadi",
+   "L'Imam ar-Rida"
+  ],
+  "reponse": 0,
+  "explication": "L'Imam Hasan al-'Askari, le 11e Imam."
+ },
+ {
+  "n": 91,
+  "niveau": 2,
+  "theme": "Imam al-Mahdi",
+  "question": "Quelle est la date de naissance de l'Imam al-Mahdi ?",
+  "choix": [
+   "13 Rajab",
+   "17 Rabi' al-Awwal",
+   "1er Muharram",
+   "15 Sha'ban"
+  ],
+  "reponse": 3,
+  "explication": "L'Imam al-Mahdi (que Dieu hâte sa venue) est né le 15 Sha'ban de l'an 255."
+ },
+ {
+  "n": 92,
+  "niveau": 2,
+  "theme": "Imam al-Mahdi",
+  "question": "Combien de représentants spéciaux l'Imam al-Mahdi a-t-il eus durant l'occultation mineure ?",
+  "choix": [
+   "4",
+   "12",
+   "2",
+   "7"
+  ],
+  "reponse": 0,
+  "explication": "Quatre représentants spéciaux (nuwwab) ; avec la mort du dernier commença l'occultation majeure."
+ },
+ {
+  "n": 93,
+  "niveau": 2,
+  "theme": "Imam al-Mahdi",
+  "question": "Quelle invocation récite-t-on traditionnellement le vendredi matin en attendant l'Imam al-Mahdi ?",
+  "choix": [
+   "Du'a Kumayl",
+   "Du'a Sabah",
+   "Du'a Nudba",
+   "Du'a Tawassul"
+  ],
+  "reponse": 2,
+  "explication": "Du'a Nudba exprime le désir de voir l'Imam du Temps."
+ },
+ {
+  "n": 94,
+  "niveau": 2,
+  "theme": "Croyance",
+  "question": "Combien de principes de la religion (usul ad-din) compte l'école ja'farite ?",
+  "choix": [
+   "10",
+   "7",
+   "5",
+   "3"
+  ],
+  "reponse": 2,
+  "explication": "L'unicité (tawhid), la justice divine ('adl), la prophétie (nubuwwa), l'imamat (imama) et la résurrection (ma'ad)."
+ },
+ {
+  "n": 95,
+  "niveau": 2,
+  "theme": "Croyance",
+  "question": "Dans les principes de la religion, que signifie « al-'Adl » ?",
+  "choix": [
+   "La générosité",
+   "La patience",
+   "La prière",
+   "La justice divine"
+  ],
+  "reponse": 3,
+  "explication": "Allah est juste et ne commet aucune injustice."
+ },
+ {
+  "n": 96,
+  "niveau": 2,
+  "theme": "Fiqh",
+  "question": "Peut-on suivre quelqu'un (taqlid) dans les principes de la religion (usul ad-din) ?",
+  "choix": [
+   "Non, chacun doit en être convaincu par lui-même",
+   "Oui, toujours",
+   "Seulement pour l'imamat",
+   "Seulement après 40 ans"
+  ],
+  "reponse": 0,
+  "explication": "La conviction dans les usul ad-din doit venir de soi ; le taqlid concerne les règles pratiques (furu')."
+ },
+ {
+  "n": 97,
+  "niveau": 2,
+  "theme": "Fiqh",
+  "question": "Quelle part du surplus annuel le khums représente-t-il ?",
+  "choix": [
+   "1/10",
+   "1/5",
+   "1/40",
+   "1/4"
+  ],
+  "reponse": 1,
+  "explication": "Le khums représente un cinquième (20 %) du surplus annuel."
+ },
+ {
+  "n": 98,
+  "niveau": 2,
+  "theme": "Fiqh",
+  "question": "Sur quoi se prosterne-t-on dans la prière, selon le fiqh ja'farite ?",
+  "choix": [
+   "Sur la terre ou ce qui en pousse, ni mangé ni porté",
+   "Sur un tapis en laine",
+   "Sur n'importe quel tissu",
+   "Sur la nourriture"
+  ],
+  "reponse": 0,
+  "explication": "D'où l'usage de la turba (morceau d'argile), notamment de Kerbala."
+ },
+ {
+  "n": 99,
+  "niveau": 2,
+  "theme": "Fiqh",
+  "question": "Combien de takbir compte la prière du mort (salat al-mayyit) chez les ja'farites ?",
+  "choix": [
+   "7",
+   "5",
+   "6",
+   "4"
+  ],
+  "reponse": 1,
+  "explication": "5 takbir, avec entre eux la shahada, la salawat, une invocation pour les croyants puis pour le défunt."
+ },
+ {
+  "n": 100,
+  "niveau": 2,
+  "theme": "Fiqh",
+  "question": "Dans le wudu ja'farite, dans quel sens lave-t-on les bras ?",
+  "choix": [
+   "On ne lave pas les bras",
+   "Dans n'importe quel sens",
+   "Du coude vers le bout des doigts",
+   "Des doigts vers le coude"
+  ],
+  "reponse": 2,
+  "explication": "On lave le bras droit puis le gauche, du coude vers le bout des doigts."
+ }
+]

@@ -152,6 +152,15 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - **Ouverture instantanée** : les conversations restent en mémoire et celles du haut de la liste sont préchargées ; au lancement, l'appli s'affiche aussitôt avec la dernière session (copie locale effacée à la déconnexion), puis se met à jour.
    - **Vocaux** : la barre d'enregistrement apparaît dès l'appui, et ▶ joue tout de suite (liens préparés à l'avance).
 
+## Mise à jour 20 : le Défi du jour
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/20-defi-du-jour.sql` et cliquer sur *Run*, puis faire de même avec `supabase/21-defi-questions.sql` (les 100 questions). Ce second script peut être relancé après une correction des questions (`supabase/defi-questions.json` en est la source).
+2. Dans le site :
+   - **Question du jour** : une question à 4 choix par jour, disponible à minuit (heure de Paris). Au premier lancement de la journée, une fenêtre s'ouvre ; « Commencer » lance le chrono, « Plus tard » la referme (la carte violette de l'accueil reste là).
+   - **Points** : 30 secondes, 100 points pour une réponse immédiate, −5 points toutes les 2 secondes ; mauvaise réponse ou temps écoulé : 0. Le chrono et la correction sont faits par le serveur : la bonne réponse n'arrive sur le téléphone qu'après avoir répondu, et une seule réponse compte.
+   - **Manches de 2 semaines** (lundi → dimanche suivant, la première commence le lundi 26 octobre 2026) : semaine 1 sur l'islam de base, semaine 2 sur les Ahlul Bayt et le fiqh ja'farite.
+   - **Onglet « Défi »** : classement en direct (podium, points, bonnes réponses), gagnant de la manche précédente et règles.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
