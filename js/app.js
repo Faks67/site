@@ -43,6 +43,7 @@ const ICONS = {
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
   poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 21h8M9 17h6"/>',
   pin2: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v8"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
@@ -431,7 +432,7 @@ async function refreshData() {
   const before = snap();
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
-  loadVitrine(); loadUnread(); loadOverview();
+  loadVitrine(); loadUnread(); loadOverview(); loadQuiz();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
   // Les conversations restent en mémoire (ouverture instantanée) ; celle affichée est rechargée tout de suite,
@@ -484,6 +485,7 @@ setInterval(() => {
   if (Date.now() - lastRefresh >= REFRESH_MS) refreshData();
   if (Date.now() - lastVersionCheck >= VERSION_MS) checkVersion();
   touchPresence();
+  if (S.view === 'defi' && Date.now() - quizBoardAt > 10000) loadQuizBoard(); // classement en direct
   applyUpdate();
 }, 5000);
 // « En ligne » : on signale sa présence au plus une fois par minute tant que l'appli est ouverte (mise à jour SQL 17)
@@ -501,21 +503,21 @@ document.addEventListener('visibilitychange', () => {
 checkVersion();
 
 /* ---------- Navigation ---------- */
-const NAV = [['accueil', 'Accueil', 'home'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
+const NAV = [['accueil', 'Accueil', 'home'], ['defi', 'Défi', 'trophy'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
 function navHtml() {
   const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
-  return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}</button>`).join('')
+  return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}${n[0] === 'defi' ? quizDot(true) : ''}</button>`).join('')
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
 // Sur téléphone : barre d'onglets en bas de l'écran, et « Plus » pour le reste
 const TABS = [['accueil', 'Accueil', 'home'], ['calendrier', 'Calendrier', 'cal'], ['discussion', 'Discussion', 'chat'], ['localisation', 'Localisation', 'pin']];
 function tabbarHtml() {
-  const more = [['presences', 'Présences', 'check'], ['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const more = [['defi', 'Défi', 'trophy'], ['presences', 'Présences', 'check'], ['bibliotheque', 'Documents', 'lib'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']].concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
   const inMore = more.some((x) => x[0] === S.view);
   return `<nav class="tabbar" aria-label="Menu">${TABS.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}><span class="ticon">${ico(i)}${k === 'discussion' ? badge('total') : ''}</span><span>${l}</span></button>`).join('')}
-    <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}>${ico('more')}<span>Plus</span></button></nav>
+    <button data-more aria-expanded="${S.moreOpen}" ${inMore ? 'aria-current="page"' : ''}><span class="ticon">${ico('more')}${quizDot()}</span><span>Plus</span></button></nav>
   ${S.moreOpen ? `<div class="sheetwrap" data-closemore><div class="card moresheet" role="dialog" aria-label="Plus de pages"><div class="grab"></div>
-    ${more.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span></button>`).join('')}
+    ${more.map(([k, l, i]) => `<button data-v="${k}" ${S.view === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${l}</span>${k === 'defi' ? quizDot(true) : ''}</button>`).join('')}
     ${themeHtml()}
     <div class="whoami"><span>Connecté·e : <b>${esc(display(S.me))}</b></span><button class="btn small" data-logout>${ico('out')} Se déconnecter</button></div></div></div>` : ''}`;
 }
@@ -775,6 +777,7 @@ function vAccueil() {
       ${ev ? `<div class="date"><span class="d">${nd.getDate()}</span><div><b>${esc(nd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, (c) => c.toUpperCase()))}</b><div style="color:var(--muted);font-size:.85rem">${esc(ev.title)}${isTimed(o) ? ' · ' + fmtHM(ev.start_time) : ''}${ev.location ? ' · ' + esc(ev.location) : ''}</div></div></div>${ev.details ? `<p style="color:var(--muted);font-size:.9rem">${esc(ev.details)}</p>` : ''}${presenceCtl(o)}` : '<p style="color:var(--muted)">Aucune date à venir pour le moment.</p>'}
     </div>
   </div>
+  ${quizCard()}
   ${prayCard()}
   <div>
     <div class="stats">
@@ -2559,6 +2562,160 @@ function focusOnMap(id) {
   if (matchMedia('(max-width:860px)').matches) $('#map')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+/* ---------- Le Défi du jour (mises à jour SQL 20 et 21) ----------
+   Une question par jour (minuit, heure de Paris), 30 s chronométrées par le serveur,
+   100 points moins 5 toutes les 2 secondes, classement sur des manches de 2 semaines. */
+const QUIZ_MS = 30000, QUIZ_SHAPES = ['▲', '◆', '●', '■'];
+const quizPts = (ms) => Math.max(30, 100 - 5 * Math.floor(Math.min(ms, 29999) / 2000));
+const quizPending = () => !!S.quiz?.has_questions && !S.quiz.answered;
+const quizDot = (inline) => (quizPending() ? `<b class="nbadge${inline ? ' inl' : ''} qzdot" aria-label="Question du jour à faire">1</b>` : '');
+const fmtPts = (n) => Number(n || 0).toLocaleString('fr-FR');
+const fmtSec = (ms) => (ms / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' s';
+let quizBoardAt = 0, quizTimer = null;
+let quizLoading = null;
+function loadQuiz() { if (!S.me) return; return (quizLoading ||= loadQuizNow().finally(() => { quizLoading = null; })); }
+async function loadQuizNow() {
+  const r = await sb.rpc('quiz_status'); if (r.error) { S.quiz = null; return; }
+  const before = JSON.stringify(S.quiz ?? null), prevDay = S.quiz?.day; S.quiz = r.data;
+  if (!S.quizBoard || prevDay !== r.data.day) loadQuizBoard();
+  if (before !== JSON.stringify(S.quiz) && !userBusy() && S.view !== 'discussion' && S.sheet !== 'quiz') render();
+  maybeQuizPopup();
+}
+async function loadQuizBoard() {
+  if (Date.now() - quizBoardAt < 800) return; // déjà demandé à l'instant
+  quizBoardAt = Date.now();
+  const [b, p] = await Promise.all([sb.rpc('quiz_board', { p_offset: 0 }), S.quizPrev === undefined ? sb.rpc('quiz_board', { p_offset: -1 }) : null]);
+  if (b.error) return;
+  S.quizBoard = b.data; if (p && !p.error) S.quizPrev = p.data;
+  const box = $('#quizboard'); if (box) box.innerHTML = quizBoardHtml();
+  else if (S.view === 'defi' && !userBusy() && S.sheet !== 'quiz') render();
+}
+// Au premier lancement de la journée : la fenêtre s'ouvre toute seule (sauf si « Plus tard » a été choisi aujourd'hui)
+function maybeQuizPopup() {
+  if (!quizPending() || S.sheet || S.quizShown === S.quiz.day || userBusy()) return;
+  let later = ''; try { later = localStorage.getItem('tdi-quiz-later'); } catch (e) { /* facultatif */ }
+  if (later === S.quiz.day) return;
+  S.quizShown = S.quiz.day; S.quizStep = 'intro'; S.sheet = 'quiz'; render();
+}
+const myQuizRank = () => { const i = (S.quizBoard || []).findIndex((x) => x.member_id === S.me.id); return i < 0 ? null : { rank: i + 1, ...S.quizBoard[i] }; };
+const ordinal = (n) => (n === 1 ? '1ᵉʳ' : n + 'ᵉ');
+// Ouvre la question : le serveur démarre le chrono et renvoie la question sans la réponse
+async function quizStart() {
+  S.quizStep = 'loading'; S.sheet = 'quiz'; render();
+  const r = await sb.rpc('quiz_open');
+  if (r.error) { S.sheet = null; render(); return fail(r.error); }
+  const q = r.data;
+  if (q.answered) { S.quizRes = q.result; S.quizQ = q; S.quizStep = 'result'; return render(); }
+  S.quizQ = { ...q, t0: Date.now() - q.elapsed_ms }; S.quizRes = null; S.quizChoice = null; S.quizStep = 'question';
+  render(); quizTick();
+  clearInterval(quizTimer); quizTimer = setInterval(quizTick, 100);
+}
+// Compte à rebours : temps, barre et points encore possibles (affichage) ; à 30 s, la question se termine
+function quizTick() {
+  const q = S.quizQ; if (!q || S.quizStep !== 'question') return clearInterval(quizTimer);
+  const ms = Date.now() - q.t0, left = Math.max(0, QUIZ_MS - ms);
+  const t = $('#qzTime'), b = $('#qzBar'), pt = $('#qzPts'), ring = $('#qzRing');
+  if (t) t.textContent = Math.ceil(left / 1000);
+  if (b) b.style.width = (left / QUIZ_MS) * 100 + '%';
+  if (ring) ring.style.setProperty('--p', (left / QUIZ_MS) * 100);
+  if (pt) pt.textContent = left > 0 ? quizPts(ms) : 0;
+  if (left <= 0 && S.quizChoice == null) quizPick(-1);
+}
+async function quizPick(i) {
+  if (S.quizStep !== 'question' || S.quizChoice != null) return;
+  S.quizChoice = i; clearInterval(quizTimer);
+  document.querySelectorAll('[data-quizpick]').forEach((b) => { b.disabled = true; b.classList.toggle('picked', Number(b.dataset.quizpick) === i); });
+  navigator.vibrate?.(12);
+  const r = await sb.rpc('quiz_answer', { p_choice: i });
+  if (r.error) { S.quizChoice = null; return fail(r.error); }
+  S.quizRes = r.data; S.quizStep = 'result';
+  if (S.quiz) Object.assign(S.quiz, { answered: true, opened: true, correct: r.data.correct, points: r.data.points, ms: r.data.ms });
+  S.quizRankBefore = myQuizRank()?.rank || null;
+  navigator.vibrate?.(r.data.correct ? [20, 40, 20] : 60);
+  render();
+  quizBoardAt = 0; await loadQuizBoard(); S.quiz && loadQuiz();
+  if (S.sheet === 'quiz' && S.quizStep === 'result') render();
+}
+function quizClose() { clearInterval(quizTimer); if (S.quizStep === 'question' && S.quizChoice == null) S.quizStep = 'intro'; }
+const weekLabel = (w) => (w === 2 ? "Semaine 2 · Ahlul Bayt et fiqh ja'farite" : 'Semaine 1 · Islam de base');
+function quizSheet() {
+  const st = S.quizStep, z = S.quiz || {}, me = myQuizRank();
+  const dayTxt = z.day ? cap(parseD(z.day).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })) : '';
+  if (st === 'loading') return `<div class="modal qzmodal"><div class="card sheet qzpop"><div class="qzsun">🌅</div><p class="hint" style="text-align:center">Préparation de la question…</p></div></div>`;
+  if (st === 'question') {
+    const q = S.quizQ;
+    return `<div class="qzfull" role="dialog" aria-modal="true" aria-label="Question du jour">
+      <div class="qztop"><button class="qzx" data-closemodal aria-label="Fermer (le temps continue de s'écouler)">✕</button><span class="qzlbl">${esc(q.theme)}</span><span class="qzpts">⚡ <b id="qzPts">100</b> pts</span></div>
+      <div class="qzbar"><i id="qzBar"></i></div>
+      <div class="qzbody"><div class="qzring" id="qzRing" style="--p:100"><span id="qzTime">30</span></div>
+        <h2 class="qztext">${esc(q.question)}</h2>
+        <div class="qzchoices">${q.choices.map((c, i) => `<button type="button" class="qzch c${i}" data-quizpick="${i}"><span class="sh">${QUIZ_SHAPES[i]}</span>${esc(c)}</button>`).join('')}</div>
+        <p class="hint" style="text-align:center">Touchez une réponse : elle est définitive.</p></div></div>`;
+  }
+  if (st === 'result') {
+    const r = S.quizRes || {}, q = S.quizQ || {}, timeout = r.choice == null;
+    const right = q.choices ? `<div class="qzchosen ok"><span>${QUIZ_SHAPES[r.answer]}</span>${esc(q.choices[r.answer])}</div>` : '';
+    const mine = q.choices && !r.correct && !timeout ? `<div class="qzchosen bad"><span>${QUIZ_SHAPES[r.choice]}</span>${esc(q.choices[r.choice])}</div>` : '';
+    const rk = me ? `<div class="qzrank"><span class="n">${ordinal(me.rank)}</span><span>${S.quizRankBefore && me.rank < S.quizRankBefore ? `Vous gagnez ${S.quizRankBefore - me.rank > 1 ? S.quizRankBefore - me.rank + ' places' : 'une place'} !` : 'Votre place dans la manche'}<small>${fmtPts(me.points)} pts · ${z.answered_today || 1} chef${(z.answered_today || 1) > 1 ? 's ont' : ' a'} répondu aujourd'hui</small></span></div>` : '';
+    return `<div class="qzfull" role="dialog" aria-modal="true" aria-label="Résultat de la question du jour">
+      <div class="qztop"><button class="qzx" data-closemodal aria-label="Fermer">✕</button><span class="qzlbl">Question du jour · ${esc(dayTxt)}</span></div>
+      <div class="qzbody qzres"><div class="qzicon ${r.correct ? 'ok' : 'bad'}">${r.correct ? '✓' : timeout ? '⏱' : '✕'}</div>
+        <h2>${r.correct ? 'Bonne réponse !' : timeout ? 'Temps écoulé' : 'Mauvaise réponse'}</h2>
+        <div class="qzgain"><b>+ ${r.points || 0}</b><span>point${r.points > 1 ? 's' : ''}${r.correct ? ' · en ' + fmtSec(r.ms) : ''}</span></div>
+        ${mine}${right}
+        ${r.explanation ? `<div class="qzexpl"><b>Le saviez-vous ?</b>${esc(r.explanation)}</div>` : ''}
+        ${rk}<button class="btn primary qzbig" data-quizboard>Voir le classement</button></div></div>`;
+  }
+  // Fenêtre d'accueil du matin
+  return `<div class="modal qzmodal" data-closemodal><div class="card sheet qzpop" role="dialog" aria-modal="true" aria-labelledby="qzTitle">
+    <div class="qzsun">🌅</div><h2 id="qzTitle">Question du jour</h2><div class="qzdate">${esc(dayTxt)}</div>
+    <span class="qzpill">${z.week === 2 ? '🕌' : '📖'} ${weekLabel(z.week)}</span>
+    <div class="qzrules"><div><b>⏱</b><span>Vous avez <b>30 secondes</b> pour choisir parmi 4 réponses.</span></div>
+      <div><b>⚡</b><span><b>100 points</b> pour une réponse immédiate, puis <b>−5 points toutes les 2 secondes</b>. Mauvaise réponse : 0.</span></div>
+      <div><b>🏆</b><span>Le meilleur chef des 2 semaines gagne la manche.</span></div></div>
+    ${me ? `<div class="qzmy"><span>Votre place dans la manche</span><span><b>${ordinal(me.rank)}</b> · ${fmtPts(me.points)} pts</span></div>` : ''}
+    ${z.opened && !z.answered ? '<p class="hint" style="text-align:center;margin:0">Vous avez déjà ouvert la question : le temps continue de s\'écouler.</p>' : ''}
+    <button class="btn primary qzbig" data-quizstart>${z.opened ? 'Reprendre' : 'Commencer'}</button><button class="qzlater" data-quizlater>Plus tard</button></div></div>`;
+}
+// Carte de l'accueil, tant que la question du jour n'est pas faite
+function quizCard() {
+  if (!quizPending()) return '';
+  const me = myQuizRank(), n = S.quiz.answered_today || 0;
+  return `<button class="qzcard" data-quizopen><span class="deco">🏆</span><span class="t">🌅 Question du jour</span>
+    <b>Pas encore répondu ! 30 secondes pour gagner jusqu'à 100 points.</b>
+    <small>${me ? `Vous êtes ${ordinal(me.rank)} · ` : ''}${n ? `${n} chef${n > 1 ? 's ont' : ' a'} déjà répondu` : 'Soyez le premier à répondre'}</small><span class="go">Répondre maintenant ›</span></button>`;
+}
+function quizBoardHtml() {
+  const b = S.quizBoard || [];
+  if (!b.length) return '<p class="hint" style="padding:14px">Personne n\'a encore joué dans cette manche. Soyez le premier !</p>';
+  const av = (x, cls = '') => { const m = member(x.member_id); return `<span class="qzav ${cls}" style="--k:${grp(m?.group_id)?.color || 'var(--green)'}">${esc(initial(m))}</span>`; };
+  const nm = (x) => (x.member_id === S.me.id ? 'Vous' : esc(member(x.member_id)?.first_name || 'Ancien membre'));
+  const pod = [b[1], b[0], b[2]].map((x, i) => x ? `<div class="qzpod${i === 1 ? ' first' : ''}">${i === 1 ? '<span class="crown">👑</span>' : ''}${av(x)}<b>${nm(x)}</b><small>${fmtPts(x.points)}</small><div class="step s${[2, 1, 3][i]}">${[2, 1, 3][i]}</div></div>` : '<div></div>').join('');
+  return `<div class="qzpodium">${pod}</div><div class="qzrows">${b.slice(3).map((x, i) => `<div class="qzr${x.member_id === S.me.id ? ' me' : ''}"><span class="n">${i + 4}</span>${av(x)}<span class="nm">${x.member_id === S.me.id ? 'Vous' : esc(display(member(x.member_id)))}<small>${x.correct} bonne${x.correct > 1 ? 's' : ''} réponse${x.correct > 1 ? 's' : ''} sur ${x.answered}</small></span><span class="pt">${fmtPts(x.points)}</span></div>`).join('')}</div>`;
+}
+function vDefi() {
+  const z = S.quiz;
+  if (!z) return `<div class="view"><div><span class="eyebrow">Compétition</span><h1>🏆 Le Défi</h1></div><div class="empty">Le Défi n'est pas encore installé : lancez les mises à jour SQL 20 et 21 dans Supabase (voir le README).</div></div>`;
+  const left = Math.max(1, Math.round((parseD(z.round_end) - parseD(z.day)) / 864e5) + 1);
+  const short = (d) => parseD(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const prev = S.quizPrev?.[0], pm = prev && member(prev.member_id);
+  const todayCard = z.answered
+    ? `<button class="qztoday" data-quizopen><span class="ic">${z.correct ? '✅' : '❌'}</span><span><b>Question du jour répondue</b><small>${z.correct ? 'Bonne réponse en ' + fmtSec(z.ms) : 'Mauvaise réponse'} · voir l'explication</small></span><span class="p">+${z.points || 0}</span></button>`
+    : `<button class="qztoday todo" data-quizopen><span class="ic">🌅</span><span><b>Question du jour</b><small>${z.opened ? 'Ouverte : le temps s\'écoule !' : '30 secondes · jusqu\'à 100 points'}</small></span><span class="go">Répondre ›</span></button>`;
+  return `<div class="view defiview">
+  <div><span class="eyebrow">Compétition</span><h1>🏆 Le Défi</h1></div>
+  <div class="qzround"><div><small>Manche en cours</small><b>${short(z.round_start)} → ${short(z.round_end)}</b><small>${weekLabel(z.week)}</small></div><div class="left"><b>${left}</b><small>jour${left > 1 ? 's' : ''} restant${left > 1 ? 's' : ''}</small></div></div>
+  ${todayCard}
+  <div class="card qzboard"><div class="qzbhead"><h3>Classement</h3><span class="qzlive"><i></i>EN DIRECT</span></div><div id="quizboard">${quizBoardHtml()}</div></div>
+  ${prev ? `<div class="qzwinner"><span>🥇</span><div><b>${pm?.title === 'Chef' ? 'Gagnant' : 'Gagnante'} de la manche précédente</b>${esc(display(pm))} · ${fmtPts(prev.points)} pts</div></div>` : ''}
+  <details class="card qzhow"><summary>Règles du Défi</summary><ul>
+    <li>Une question par jour, disponible à partir de minuit.</li><li>30 secondes pour répondre ; le chrono démarre en touchant « Commencer ».</li>
+    <li>Bonne réponse : 100 points, moins 5 points toutes les 2 secondes. Mauvaise réponse ou temps écoulé : 0.</li>
+    <li>Manches de 2 semaines (lundi → dimanche suivant) : la 1ʳᵉ semaine sur l'islam de base, la 2ᵉ sur les Ahlul Bayt et le fiqh ja'farite.</li>
+    <li>En cas d'égalité : le plus de bonnes réponses, puis le temps total le plus court.</li></ul></details>
+  </div>`;
+}
+
 /* ---------- Rendu ---------- */
 function render() {
   if (!S.session) { root.innerHTML = vAuth(); return; }
@@ -2567,10 +2724,10 @@ function render() {
     root.innerHTML = `<div class="auth"><div class="card"><div class="logo"><img src="assets/logo.png" alt=""><h2>Accès en attente</h2></div><p>Votre compte (${esc(S.session.user.email)}) n'est relié à aucun chef ou cheftaine. Demandez à un administrateur d'ajouter cette adresse dans la page Administration, puis reconnectez-vous.</p><button class="btn block" data-logout>Se déconnecter</button></div></div>`;
     return;
   }
-  const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
+  const V = { defi: vDefi, presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet?.startsWith('convact:') ? convActSheet(S.sheet.slice(8)) : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'quiz' ? quizSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet?.startsWith('convact:') ? convActSheet(S.sheet.slice(8)) : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
     : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
@@ -2649,7 +2806,7 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-mapidf]')) return mapInst?.flyTo({ ...IDF, speed: 1.6 });
   if (t.closest('[data-mapfr]')) return mapInst?.fitBounds([[-5.2, 41.3], [9.6, 51.1]], { padding: 30 });
   // Calendrier
-  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { if (S.sheet === 'poll') S.pollDraft = null; if (S.sheet === 'loc') S.locDraft = null; S.evModal = null; S.sheet = null; return render(); }
+  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { if (S.sheet === 'poll') S.pollDraft = null; if (S.sheet === 'loc') S.locDraft = null; if (S.sheet === 'quiz') quizClose(); S.evModal = null; S.sheet = null; return render(); }
   // Accueil, présences, notifications, canaux
   const st = t.closest('[data-stat]'); if (st) return statClick(st.dataset.stat);
   const sg = t.closest('[data-statgo]'); if (sg) return statGo(sg.dataset.statgo);
@@ -2697,6 +2854,12 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
   if (t.closest('[data-convinfo]')) { $('#msgIn')?.blur(); S.sheet = 'convinfo'; render(); return; }
   if (t.closest('[data-locsend]')) return sendLocation();
+  // Défi du jour
+  if (t.closest('[data-quizopen]')) { S.quizStep = S.quiz?.answered ? 'result' : 'intro'; S.sheet = 'quiz'; if (S.quiz?.answered) quizStart(); return render(); }
+  if (t.closest('[data-quizstart]')) return quizStart();
+  if (t.closest('[data-quizlater]')) { try { localStorage.setItem('tdi-quiz-later', S.quiz?.day || ''); } catch (e) { /* facultatif */ } quizClose(); S.sheet = null; return render(); }
+  const qp = t.closest('[data-quizpick]'); if (qp) return quizPick(Number(qp.dataset.quizpick));
+  if (t.closest('[data-quizboard]')) { quizClose(); S.sheet = null; return go('defi'); }
   const pn = t.closest('[data-pin]'); if (pn) return togglePin(pn.dataset.pin);
   const mr = t.closest('[data-markread]'); if (mr) { markRead(mr.dataset.markread); S.sheet = null; return render(); }
   const dmb = t.closest('[data-dm]'); if (dmb) { S.sheet = null; return openConv(dmId(S.me.id, dmb.dataset.dm)); }
@@ -2846,7 +3009,7 @@ root.addEventListener('submit', async (e) => {
     render(); toast('Personne ajoutée');
   }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen || S.sheet)) { if (S.sheet === 'poll') S.pollDraft = null; S.evModal = null; S.moreOpen = false; S.sheet = null; render(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (S.evModal || S.moreOpen || S.sheet)) { if (S.sheet === 'poll') S.pollDraft = null; if (S.sheet === 'quiz') quizClose(); S.evModal = null; S.moreOpen = false; S.sheet = null; render(); } });
 root.addEventListener('keydown', (e) => { if (e.target.id === 'efAddr') addrKey(e); }, true);
 // Sur ordinateur, Entrée envoie (Maj + Entrée pour aller à la ligne) ; sur téléphone, Entrée va à la ligne
 const touchScreen = () => matchMedia('(pointer: coarse)').matches;
@@ -2946,7 +3109,7 @@ async function boot() {
   }
   if (!routed) route();
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
-  if (S.me) loadOverview();
+  if (S.me) { loadOverview(); loadQuiz(); }
   if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
   render();
 }
