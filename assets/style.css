@@ -1042,3 +1042,12 @@ table.praytable td:first-child,table.praytable th:first-child{text-align:left;fo
 .locwait{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:14px 0}
 .locwait .locpin{animation:pulse .8s ease-in-out infinite alternate}
 .locwait small{color:var(--muted)}
+
+/* Conversations épinglées */
+.cpin{flex:none;color:var(--muted);display:grid;place-items:center}
+.convrow{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.convact{gap:4px;max-width:420px;margin-inline:auto}
+.convact-head{display:flex;align-items:center;gap:10px;padding:2px 4px 10px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.actrow{display:flex;align-items:center;gap:14px;border:0;background:none;padding:13px 10px;border-radius:12px;font-weight:700;font-size:1rem;text-align:left;color:var(--fg)}
+.actrow:hover{background:var(--surface-2)}
+.actrow svg{width:22px;height:22px;color:var(--green-ink)}

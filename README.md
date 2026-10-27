@@ -137,6 +137,11 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - **Message vocal** : maintenir le micro, relâcher pour envoyer ; glisser à gauche pour annuler, vers le haut pour verrouiller. Comme les autres pièces jointes, les vocaux sont effacés au bout de 30 jours.
    - **En ligne / vu il y a…** : affiché dans les conversations privées.
 
+## Mise à jour 18 : conversations épinglées
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/18-conversations-epinglees.sql` et cliquer sur *Run*.
+2. Dans la Discussion : **appui long** (ou clic droit sur ordinateur) sur une conversation > *Épingler en haut*, ou bouton *Épingler* dans la fiche de la conversation (toucher l'en-tête). Jusqu'à 5 conversations épinglées, gardées sur tous les appareils de chaque chef.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

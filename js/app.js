@@ -43,6 +43,7 @@ const ICONS = {
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
   poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  pin2: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v8"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
@@ -71,7 +72,7 @@ const S = {
   absences: [], notifCh: ['annonces'], unread: {}, sheet: null,
   picker: null, gifQ: '', gifs: [], gifErr: '', replyTo: null,
   reads: {}, votes: {}, pollDraft: null, mention: null,
-  overview: {}, convQ: '', convFilter: 'all', plusOpen: false, rec: null, voice: null
+  overview: {}, pinned: [], convQ: '', convFilter: 'all', plusOpen: false, rec: null, voice: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -179,11 +180,11 @@ async function loadAll() {
   // Mise à jour 6 : en cas d'erreur (script SQL pas encore lancé), on garde les valeurs précédentes
   const [ab, np, pp] = await Promise.all([
     sb.from('event_absences').select('event_id, occ_date, member_id').gte('occ_date', addDays(today(), -62)),
-    S.me ? sb.from('notif_prefs').select('channels').eq('member_id', S.me.id).maybeSingle() : null,
+    S.me ? sb.from('notif_prefs').select('*').eq('member_id', S.me.id).maybeSingle() : null,
     sb.from('app_settings').select('value').eq('key', 'prayer_place').maybeSingle()
   ]);
   if (!ab.error) S.absences = ab.data;
-  if (np && !np.error) S.notifCh = np.data ? np.data.channels : ['annonces'];
+  if (np && !np.error) { S.notifCh = np.data ? np.data.channels : ['annonces']; S.pinned = np.data?.pinned || []; }
   if (!pp.error) S.prayerPlace = pp.data?.value?.lat != null ? pp.data.value : null;
   loadThumbs();
 }
@@ -1612,8 +1613,9 @@ function convList() {
   const ids = new Set(myChannels().map((c) => c.id));
   Object.keys(S.overview).forEach((ch) => { if (isDmId(ch) && seesChan(S.me, ch)) ids.add(ch); });
   if (S.chan && isDmId(S.chan)) ids.add(S.chan); // nouvelle conversation pas encore commencée
-  const order = myChannels().map((c) => c.id);
+  const order = myChannels().map((c) => c.id), pin = (id) => { const i = S.pinned.indexOf(id); return i < 0 ? 99 : i; };
   return [...ids].map(convOf).sort((a, b) => {
+    if (pin(a.id) !== pin(b.id)) return pin(a.id) - pin(b.id);
     const x = S.overview[a.id]?.created_at, y = S.overview[b.id]?.created_at;
     if (x && y) return new Date(y) - new Date(x);
     if (x || y) return x ? -1 : 1;
@@ -1634,7 +1636,27 @@ function convRow(c) {
   const line = m ? who + esc(prevText(m)) : c.dm ? 'Nouvelle conversation' : 'Aucun message pour l\'instant';
   return `<button class="convrow${n ? ' unread' : ''}" data-conv="${esc(c.id)}" data-cname="${esc(fold(c.name))}" data-kind="${c.dm ? 'dm' : 'chan'}" aria-current="${S.chan === c.id}">
     ${convAv(c)}<span class="cmain"><span class="ctop"><b>${esc(c.name)}</b>${m ? `<time>${relTime(m.created_at)}</time>` : ''}</span>
-    <span class="cbot"><span>${line}</span>${n ? `<i class="cbadge">${fmtN(n)}</i>` : ''}</span></span></button>`;
+    <span class="cbot"><span>${line}</span>${S.pinned.includes(c.id) ? `<i class="cpin" aria-label="Épinglée">${ico('pin2', 15)}</i>` : ''}${n ? `<i class="cbadge">${fmtN(n)}</i>` : ''}</span></span></button>`;
+}
+// Épingler : jusqu'à 5 conversations en haut de la liste, gardées sur tous les appareils (mise à jour SQL 18)
+const PIN_MAX = 5;
+async function togglePin(id) {
+  const prev = S.pinned, on = prev.includes(id);
+  if (!on && prev.length >= PIN_MAX) return toast(`${PIN_MAX} conversations épinglées au maximum : retirez-en une d'abord.`);
+  S.pinned = on ? prev.filter((x) => x !== id) : [id, ...prev];
+  paintConvList(); if (S.sheet) { if (S.sheet.startsWith('convact:')) S.sheet = null; render(); }
+  toast(on ? 'Conversation désépinglée' : 'Conversation épinglée');
+  const r = await sb.from('notif_prefs').upsert({ member_id: S.me.id, pinned: S.pinned, updated_at: new Date().toISOString() });
+  if (r.error) { S.pinned = prev; paintConvList(); fail(['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 18 dans Supabase") : r.error); }
+}
+// Appui long (ou clic droit) sur une conversation : épingler, marquer comme lu
+function convActSheet(id) {
+  const c = convOf(id), on = S.pinned.includes(id), n = S.unread[id] || 0;
+  return `<div class="modal" data-closemodal><div class="card sheet convact" role="dialog" aria-modal="true" aria-label="Actions sur la conversation">
+    <div class="convact-head">${convAv(c, 'sm')}<b>${esc(c.name)}</b></div>
+    <button type="button" class="actrow" data-pin="${esc(id)}">${ico('pin2')}<span>${on ? 'Désépingler' : 'Épingler en haut'}</span></button>
+    ${n ? `<button type="button" class="actrow" data-markread="${esc(id)}">${ico('check')}<span>Marquer comme lu</span></button>` : ''}
+    <button type="button" class="actrow" data-closemodal>${ico('back')}<span>Annuler</span></button></div></div>`;
 }
 const CONV_FILTERS = [['all', 'Tout'], ['unread', 'Non lus'], ['chan', 'Canaux'], ['dm', 'Privés']];
 function convRowsHtml() {
@@ -1678,6 +1700,17 @@ function closeConv() {
   try { history.replaceState(null, '', '#discussion'); } catch (e) {}
   render(); loadOverview();
 }
+// Appui long sur une ligne de la liste : actions (épingler…) ; le toucher simple ouvre la conversation
+let convPress = null;
+root.addEventListener('pointerdown', (e) => {
+  const row = e.target.closest('#convlist [data-conv]'); if (!row || e.button > 0) return;
+  const p = convPress = { id: row.dataset.conv, x: e.clientX, y: e.clientY, done: false };
+  p.t = setTimeout(() => { p.done = true; navigator.vibrate?.(12); S.sheet = 'convact:' + p.id; render(); }, 500);
+});
+root.addEventListener('pointermove', (e) => { if (convPress && !convPress.done && Math.hypot(e.clientX - convPress.x, e.clientY - convPress.y) > 10) { clearTimeout(convPress.t); convPress = null; } });
+['pointerup', 'pointercancel'].forEach((ev) => root.addEventListener(ev, () => { if (convPress && !convPress.done) { clearTimeout(convPress.t); convPress = null; } }));
+root.addEventListener('click', (e) => { if (convPress?.done && e.target.closest('#convlist [data-conv]')) { e.stopImmediatePropagation(); e.preventDefault(); } convPress = null; }, true);
+root.addEventListener('contextmenu', (e) => { const row = e.target.closest('#convlist [data-conv]'); if (!row) return; e.preventDefault(); clearTimeout(convPress?.t); convPress = null; S.sheet = 'convact:' + row.dataset.conv; render(); });
 // Le bouton « retour » du téléphone ferme la conversation
 window.addEventListener('popstate', () => { if (S.view === 'discussion' && S.chan && !location.hash.startsWith('#chat-')) closeConv(); });
 
@@ -1772,7 +1805,7 @@ function convInfoSheet() {
           <span class="cbot"><span class="gline"><i style="--k:${g?.color || 'var(--muted)'}"></i>${esc([g?.name, poleNames(x)].filter(Boolean).join(' · ') || ROLES[x.role] || '')}</span></span></span></button>`; }).join('')}</div></section>`;
   }
   return `<div class="modal" data-closemodal><div class="card sheet infosheet" role="dialog" aria-modal="true" aria-label="Infos de la conversation">
-    <div class="row" style="justify-content:flex-end"><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <div class="row" style="justify-content:space-between"><button class="btn small" data-pin="${esc(c.id)}">${ico('pin2', 16)} ${S.pinned.includes(c.id) ? 'Désépingler' : 'Épingler'}</button><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
     ${top}${sharedHtml(c.id)}
     <small class="hint">Partagé dans cette conversation ces ${INFO_DAYS} derniers jours (les pièces jointes sont effacées au bout de 30 jours).</small></div></div>`;
 }
@@ -2411,7 +2444,7 @@ function render() {
   const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet?.startsWith('convact:') ? convActSheet(S.sheet.slice(8)) : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
     : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
@@ -2538,6 +2571,8 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
   if (t.closest('[data-convinfo]')) { $('#msgIn')?.blur(); S.sheet = 'convinfo'; render(); return; }
   if (t.closest('[data-locsend]')) return sendLocation();
+  const pn = t.closest('[data-pin]'); if (pn) return togglePin(pn.dataset.pin);
+  const mr = t.closest('[data-markread]'); if (mr) { markRead(mr.dataset.markread); S.sheet = null; return render(); }
   const dmb = t.closest('[data-dm]'); if (dmb) { S.sheet = null; return openConv(dmId(S.me.id, dmb.dataset.dm)); }
   if (t.closest('[data-plus]')) { $('#msgIn')?.blur(); return togglePlus(); }
   const pls = t.closest('[data-plusopt]'); if (pls) return plusOption(pls.dataset.plusopt);
