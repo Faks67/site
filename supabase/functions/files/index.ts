@@ -37,10 +37,11 @@ function b2() {
 }
 // Les fichiers B2 sont reconnus à leur chemin : b2/<identifiant>/<nom>
 const isB2Path = (p: unknown): p is string => typeof p === 'string' && /^b2\/[\w-]+\/[\w.-]+$/.test(p);
-// Même règle que public.can_see_channel (mises à jour SQL 09 et 12)
+// Même règle que public.can_see_channel (mises à jour SQL 09, 12 et 17)
 type Me = { id: string; is_admin: boolean; pole_id: string | null; pole_ids: string[] | null; chat_channels: string[] | null };
-const seesChannel = (m: Me, ch: string) => ['annonces', 'general'].includes(ch) || m.is_admin || m.pole_id === ch
-  || (m.pole_ids || []).includes(ch) || (m.chat_channels || []).includes(ch);
+// Conversation privée « dm:<chef>:<chef> » : les deux chefs seulement (mise à jour SQL 17)
+const seesChannel = (m: Me, ch: string) => ch.startsWith('dm:') ? ch.split(':').slice(1, 3).includes(m.id)
+  : ['annonces', 'general'].includes(ch) || m.is_admin || m.pole_id === ch || (m.pole_ids || []).includes(ch) || (m.chat_channels || []).includes(ch);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });

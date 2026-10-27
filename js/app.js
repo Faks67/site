@@ -42,6 +42,16 @@ const ICONS = {
   send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 10"/>',
   poll: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  doc: '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 13h6M9 17h6"/>',
+  pencil: '<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   clip: '<path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l8-8"/>'
 };
 const ico = (k, size) => `<svg viewBox="0 0 24 24" ${size ? `style="width:${size}px;height:${size}px"` : ''} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -60,7 +70,8 @@ const S = {
   reclamations: [], recTab: 'mes', recFilter: 'en_attente', recBusy: false,
   absences: [], notifCh: ['annonces'], unread: {}, sheet: null,
   picker: null, gifQ: '', gifs: [], gifErr: '', replyTo: null,
-  reads: {}, votes: {}, pollDraft: null, mention: null
+  reads: {}, votes: {}, pollDraft: null, mention: null,
+  overview: {}, convQ: '', convFilter: 'all', plusOpen: false, rec: null, voice: null
 };
 const member = (id) => S.members.find((m) => m.id === id);
 const grp = (id) => S.groups.find((g) => g.id === id);
@@ -86,7 +97,11 @@ const can = (p) => !!S.me && (S.me.is_admin || (S.me.permissions || []).includes
 const canAdminPage = () => can('membres');
 const canRecl = () => can('reclamation') || can('remboursement');
 // Canaux de discussion : ceux des pôles sont réservés aux chefs du pôle (même règle que supabase/09-sondages-vu-mentions.sql)
-const seesChan = (m, id) => { const c = CHANNELS.find((x) => x.id === id); return !!m && !!c && (!c.pole || m.is_admin || inPole(m, id) || (m.chat_channels || []).includes(id)); };
+// Conversation privée « dm:<chef>:<chef> » (mise à jour SQL 17) : les deux chefs seulement, même pas les administrateurs
+const isDmId = (id) => typeof id === 'string' && id.startsWith('dm:');
+const dmId = (a, b) => 'dm:' + [a, b].sort().join(':');
+const dmOther = (id) => member(id.split(':').slice(1, 3).find((x) => x !== S.me?.id));
+const seesChan = (m, id) => { if (isDmId(id)) return !!m && id.split(':').slice(1, 3).includes(m.id); const c = CHANNELS.find((x) => x.id === id); return !!m && !!c && (!c.pole || m.is_admin || inPole(m, id) || (m.chat_channels || []).includes(id)); };
 const myChannels = () => CHANNELS.filter((c) => seesChan(S.me, c.id));
 const ROLES = { principale: 'Cheffe principale', doyenne: 'Doyenne', chef: 'Chef / cheftaine', stagiaire: 'Stagiaire' };
 
@@ -256,17 +271,20 @@ function startRealtime() {
   if (S.realtime) return;
   S.realtime = sb.channel('messages-live')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: m }) => {
+      setOverview(m);
       if (m.member_id !== S.me?.id) {
         if (viewingChat() && S.chan === m.channel) markRead(m.channel);
         else { S.unread[m.channel] = (S.unread[m.channel] || 0) + 1; paintBadges(); }
       }
+      paintConvList();
       const list = S.msgs[m.channel]; if (!list) return;
       if (!list.some((x) => x.id === m.id)) list.push(m);
       if (S.view === 'discussion' && S.chan === m.channel) patchChat();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
       removeMsg(old.id);
-      if (S.view === 'discussion') patchChat();
+      if (Object.values(S.overview).some((x) => x.id === old.id)) loadOverview();
+      if (S.view === 'discussion' && S.chan) patchChat();
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, ({ new: x }) => {
       const l = S.reacts[x.message_id] || (S.reacts[x.message_id] = []);
@@ -298,18 +316,18 @@ function startRealtime() {
 }
 
 /* ---------- Messages non lus (bulle sur l'onglet Discussion) ---------- */
-const viewingChat = () => S.view === 'discussion' && !document.hidden;
-const unreadTotal = () => myChannels().reduce((t, c) => t + (S.unread[c.id] || 0), 0);
+const viewingChat = () => S.view === 'discussion' && !!S.chan && !document.hidden;
+const unreadTotal = () => Object.keys(S.unread).reduce((t, ch) => t + (seesChan(S.me, ch) ? S.unread[ch] || 0 : 0), 0);
 const fmtN = (n) => (n > 99 ? '99+' : String(n));
 async function loadUnread() {
   const r = await sb.rpc('unread_counts'); if (r.error) return;
   const u = {}; r.data.forEach((x) => (u[x.channel] = Number(x.n)));
   if (viewingChat()) u[S.chan] = 0;
-  S.unread = u; paintBadges();
+  S.unread = u; paintBadges(); paintConvList();
 }
 const readTimers = {};
 function markRead(ch) {
-  if (S.unread[ch]) { S.unread[ch] = 0; paintBadges(); }
+  if (S.unread[ch]) { S.unread[ch] = 0; paintBadges(); paintConvList(); }
   clearTimeout(readTimers[ch]);
   readTimers[ch] = setTimeout(() => sb.rpc('mark_read', { p_channel: ch }).then(() => {}, () => {}), 800);
 }
@@ -318,7 +336,6 @@ function paintBadges() {
   const n = unreadTotal();
   document.querySelectorAll('[data-badge="total"]').forEach((el) => { el.textContent = fmtN(n); el.hidden = !n; });
   document.querySelectorAll('[data-badge-ch]').forEach((el) => { const k = S.unread[el.dataset.badgeCh] || 0; el.textContent = fmtN(k); el.hidden = !k; });
-  const dot = $('#chanDot'); if (dot) dot.hidden = !myChannels().some((c) => c.id !== S.chan && S.unread[c.id]);
   try { (n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.())?.catch?.(() => {}); } catch (e) {}
 }
 
@@ -333,7 +350,7 @@ let lastRefresh = 0, lastVersionCheck = 0, siteVersion = null, updateReady = fal
 function userBusy() {
   const a = document.activeElement;
   if (a && a.matches('input, textarea, select') && !['msgIn', 'libQ'].includes(a.id)) return true;
-  return !!S.uploading || S.recBusy || S.evModal?.mode === 'edit' || S.moreOpen || !!S.reactPicker || S.emojiOpen;
+  return !!S.uploading || S.recBusy || !!S.rec || S.evModal?.mode === 'edit' || S.moreOpen || !!S.reactPicker || S.emojiOpen;
 }
 async function refreshData() {
   if (!S.me || document.hidden || !navigator.onLine) return;
@@ -342,12 +359,13 @@ async function refreshData() {
   const before = snap();
   try { await loadAll(); } catch (e) { return; }
   if (!S.me) return render();
-  loadVitrine(); loadUnread();
+  loadVitrine(); loadUnread(); loadOverview();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
   // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
   for (const ch in S.msgs) if (ch !== S.chan || S.view !== 'discussion') delete S.msgs[ch];
-  if (S.view === 'discussion') await loadMessages(S.chan);
+  if (S.view === 'discussion' && S.chan) await loadMessages(S.chan);
+  if (S.view === 'discussion') { paintConvList(); paintConvHead(); }
   const changed = before !== snap();
   if (!changed || userBusy()) return;
   if (S.evModal?.mode === 'view') {
@@ -382,6 +400,7 @@ function wakeUp() {
   if (Date.now() - lastRefresh > 5000) refreshData();
   if (Date.now() - lastVersionCheck > 15000) checkVersion();
   if (S.me && viewingChat()) markRead(S.chan);
+  touchPresence();
   applyUpdate();
 }
 document.addEventListener('visibilitychange', wakeUp);
@@ -392,8 +411,15 @@ setInterval(() => {
   if (document.hidden) return;
   if (Date.now() - lastRefresh >= REFRESH_MS) refreshData();
   if (Date.now() - lastVersionCheck >= VERSION_MS) checkVersion();
+  touchPresence();
   applyUpdate();
 }, 5000);
+// « En ligne » : on signale sa présence au plus une fois par minute tant que l'appli est ouverte (mise à jour SQL 17)
+let lastTouch = 0;
+function touchPresence() {
+  if (!S.me || document.hidden || Date.now() - lastTouch < 60000) return;
+  lastTouch = Date.now(); sb.rpc('touch_presence').then(() => {}, () => {});
+}
 checkVersion();
 
 /* ---------- Navigation ---------- */
@@ -423,7 +449,11 @@ function badge(key, inline) {
 function go(v) {
   S.view = v; S.moreOpen = false; S.evModal = null; S.sheet = null;
   try { history.replaceState(null, '', '#' + v); } catch (e) {}
-  if (v === 'discussion') { if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan); }
+  if (v === 'discussion') {
+    if (narrow()) S.chan = null; // sur téléphone, l'onglet s'ouvre sur la liste des conversations
+    loadOverview();
+    if (S.chan) { if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan); }
+  }
   render(); window.scrollTo(0, 0);
 }
 function bellHtml() {
@@ -1074,7 +1104,7 @@ function reactionsHtml(m) {
 }
 const GIF_RE = /^https:\/\/(media[0-9]*|i)\.giphy\.com\/[A-Za-z0-9/._-]+$/;
 const findMsg = (id) => Object.values(S.msgs).flat().find((x) => x.id === id);
-const msgPreview = (o) => (o.gif_url ? '🎞️ GIF' : o.poll_options ? '📊 ' + o.body : o.body);
+const msgPreview = (o) => prevText(o);
 
 /* ---------- Pièces jointes de la discussion (Backblaze B2, effacées au bout de 30 jours) ---------- */
 const ATT_DAYS = 30, ATT_MAX = 25 * 1048576;
@@ -1090,6 +1120,55 @@ function attHtml(m) {
   if (k === 'vid') return `<video class="attvid" controls playsinline preload="metadata" ${src} data-attsrc="${esc(m.attach_path)}" ${ratio}></video>`;
   const ext = (m.attach_name.split('.').pop() || 'FICHIER').toUpperCase().slice(0, 4);
   return `<button type="button" class="attfile" data-attopen="${esc(m.attach_path)}"><span class="ficon">${esc(ext)}</span><span><b>${esc(m.attach_name)}</b><small>${m.attach_size ? fmtSize(m.attach_size) + ' · ' : ''}encore ${left} jour${left > 1 ? 's' : ''}</small></span></button>`;
+}
+// Message vocal : bouton lecture, forme de la voix, durée (lecteur unique pour toute la discussion)
+function voiceBars(m) {
+  let p = m.voice_peaks?.length ? m.voice_peaks : null;
+  if (!p) { let h = 0; for (const ch of m.attach_path || m.body) h = (h * 31 + ch.charCodeAt(0)) >>> 0; p = Array.from({ length: 32 }, (_, i) => 25 + ((h >> (i % 24)) & 7) * 10); }
+  return p.map((v) => `<i style="height:${Math.max(12, Math.min(100, v))}%"></i>`).join('');
+}
+function voiceHtml(m) {
+  if (!m.attach_path) return attHtml(m);
+  const on = S.voice?.path === m.attach_path && S.voice.playing;
+  return `<div class="voice" data-voice="${esc(m.attach_path)}"><button type="button" class="vplay" data-vplay="${esc(m.attach_path)}" aria-label="${on ? 'Pause' : 'Écouter le message vocal'}">${on ? '❚❚' : '▶'}</button>
+    <span class="vwave">${voiceBars(m)}</span><span class="vdur">${fmtDur(m.attach_dur || 0)}</span></div>`;
+}
+const voicePlayer = new Audio();
+voicePlayer.preload = 'none';
+function stopVoice() { voicePlayer.pause(); S.voice = null; }
+async function playVoice(path) {
+  if (S.voice?.path === path) { if (voicePlayer.paused) { voicePlayer.play().catch(() => {}); S.voice.playing = true; } else { voicePlayer.pause(); S.voice.playing = false; } return paintVoice(); }
+  voicePlayer.pause(); S.voice = { path, playing: true }; paintVoice();
+  try {
+    let url = attUrl(path);
+    if (!url) { url = (await b2Links([path]))[path]; if (url) S.attLinks[path] = { url, at: Date.now() }; }
+    if (!url) throw new Error('message vocal introuvable ou expiré');
+    if (S.voice?.path !== path) return;
+    voicePlayer.src = url; await voicePlayer.play();
+  } catch (e) { S.voice = null; paintVoice(); fail(e); }
+}
+// Avancement : les barres déjà écoutées se colorent, le temps défile
+function paintVoice() {
+  document.querySelectorAll('.voice').forEach((v) => {
+    const cur = S.voice?.path === v.dataset.voice, b = v.querySelector('.vplay'), bars = v.querySelectorAll('.vwave i');
+    b.textContent = cur && S.voice.playing ? '❚❚' : '▶';
+    const f = cur && voicePlayer.duration ? voicePlayer.currentTime / voicePlayer.duration : 0;
+    bars.forEach((x, i) => x.classList.toggle('p', cur && i < Math.round(f * bars.length)));
+    if (cur && voicePlayer.duration) v.querySelector('.vdur').textContent = fmtDur(voicePlayer.currentTime);
+  });
+}
+voicePlayer.addEventListener('timeupdate', paintVoice);
+voicePlayer.addEventListener('ended', () => { const m = S.voice; S.voice = null; paintVoice(); if (m) { const v = document.querySelector(`.voice[data-voice="${CSS.escape(m.path)}"] .vdur`); const msg = Object.values(S.msgs).flat().find((x) => x.attach_path === m.path); if (v && msg) v.textContent = fmtDur(msg.attach_dur || 0); } });
+// Position partagée
+const locHtml = (m) => `<div class="loccard"><span class="locpin">${ico('pin')}</span><span class="locmain"><b>${esc(m.loc_label || 'Position partagée')}</b><small>${m.loc_lat.toFixed(4)}, ${m.loc_lng.toFixed(4)}</small>
+  <span class="row">${placeLinks({ lat: m.loc_lat, lng: m.loc_lng })}</span></span></div>`;
+// Événement partagé : un toucher l'ouvre dans le calendrier
+function evCardHtml(m) {
+  const e = S.events.find((x) => x.id === m.event_ref);
+  if (!e) return `<div class="evcard off"><span class="evday"><b>?</b></span><span class="locmain"><b>${esc(m.body.replace(/^📅\s*/, ''))}</b><small>Événement non disponible</small></span></div>`;
+  const o = occurrences(today(), addDays(today(), 400)).find((x) => x.e.id === e.id) || { e, start: e.date, end: e.end_date || e.date };
+  return `<button type="button" class="evcard" data-evopen="${e.id}"><span class="evday" style="--k:${evColor(e)}"><b>${parseD(o.start).getDate()}</b><small>${parseD(o.start).toLocaleDateString('fr-FR', { month: 'short' })}</small></span>
+    <span class="locmain"><b>${esc(e.title)}</b><small>${esc(occWhen(o))}${e.location ? ' · ' + esc(e.location) : ''}</small><span class="evopen">Voir dans le calendrier ›</span></span></button>`;
 }
 // Liens temporaires (1 h) : gardés 50 minutes, demandés par lots après l'affichage
 S.attLinks = {};
@@ -1134,7 +1213,130 @@ async function sendAttachment(f0) {
   } catch (e) { fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
   S.attBusy = false; paintAttBtn();
 }
-const paintAttBtn = () => { const b = $('[data-attach]'); if (b) { b.disabled = !!S.attBusy; b.classList.toggle('busy', !!S.attBusy); } };
+// Bouton « + » : chaque option
+function plusOption(k) {
+  togglePlus(false);
+  if (k === 'media') return $('#attFile')?.click();
+  if (k === 'camera') return $('#camFile')?.click();
+  if (k === 'doc') return $('#docFile')?.click();
+  if (k === 'poll') { closePicker(); $('#msgIn')?.blur(); S.sheet = 'poll'; render(); $('#plQ')?.focus(); return; }
+  if (k === 'event') { S.sheet = 'evpick'; return render(); }
+  if (k === 'loc') return shareLocation();
+}
+function shareLocation() {
+  if (!navigator.geolocation) return toast("La position n'est pas disponible sur cet appareil.");
+  toast('Recherche de votre position…');
+  navigator.geolocation.getCurrentPosition(
+    (p) => sendMessage({ body: '📍 Position partagée', loc_lat: p.coords.latitude, loc_lng: p.coords.longitude, loc_label: `Position de ${S.me.first_name}` }),
+    (err) => toast(err.code === 1 ? 'Autorisez la localisation pour partager votre position.' : 'Position introuvable, réessayez dehors ou avec le GPS activé.'),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+}
+function shareEvent(id) {
+  const e = S.events.find((x) => String(x.id) === id); if (!e) return;
+  const o = occurrences(today(), addDays(today(), 400)).find((x) => x.e.id === e.id);
+  return sendMessage({ body: `📅 ${e.title} · ${fmtLong(o ? o.start : e.date)}`, event_ref: e.id });
+}
+function openSharedEvent(id) {
+  const e = S.events.find((x) => String(x.id) === id); if (!e) return toast('Événement non disponible');
+  const o = occurrences(today(), addDays(today(), 400)).find((x) => x.e.id === e.id) || findOcc(`${e.id}|${e.date}`);
+  go('calendrier'); S.calSel = S.calDate = o.start; S.evModal = { mode: 'view', occ: o }; render();
+}
+
+/* ---------- Messages vocaux : maintenir le micro, glisser à gauche pour annuler, vers le haut pour verrouiller ---------- */
+const REC_MAX = 300;
+function recMime() {
+  for (const t of ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
+  return '';
+}
+async function startRec(e, btn) {
+  if (S.rec) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("L'enregistrement vocal n'est pas possible sur cet appareil.");
+  togglePlus(false); closePicker(); $('#msgIn')?.blur();
+  const r = S.rec = { x0: e.clientX, y0: e.clientY, t0: 0, locked: false, up: false, chunks: [], peaks: [], pointer: e.pointerId };
+  try { btn.setPointerCapture(e.pointerId); } catch (err) { /* facultatif */ }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (err) { S.rec = null; return toast(err.name === 'NotAllowedError' ? 'Autorisez le micro pour envoyer un message vocal.' : 'Micro indisponible.'); }
+  if (S.rec !== r) { stream.getTracks().forEach((x) => x.stop()); return; }
+  r.stream = stream;
+  const mime = recMime();
+  try { r.rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined); }
+  catch (err) { r.rec = new MediaRecorder(stream); }
+  r.rec.ondataavailable = (ev) => { if (ev.data.size) r.chunks.push(ev.data); };
+  r.rec.start(250);
+  try { const AC = window.AudioContext || window.webkitAudioContext; r.ac = new AC(); r.ac.resume?.().catch(() => {}); r.an = r.ac.createAnalyser(); r.an.fftSize = 512; r.ac.createMediaStreamSource(stream).connect(r.an); r.buf = new Uint8Array(r.an.fftSize); } catch (err) { /* forme de la voix facultative */ }
+  r.t0 = Date.now();
+  // Bouton relâché pendant que le téléphone demandait l'accès au micro : on n'enregistre pas
+  if (r.up) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
+  navigator.vibrate?.(15);
+  $('#compose')?.classList.add('recording');
+  r.tick = setInterval(recTick, 100); recTick();
+}
+function recTick() {
+  const r = S.rec; if (!r?.t0) return;
+  let lvl = 0;
+  if (r.an) { r.an.getByteTimeDomainData(r.buf); let sum = 0; for (const v of r.buf) sum += ((v - 128) / 128) ** 2; lvl = Math.sqrt(sum / r.buf.length); }
+  r.peaks.push(lvl);
+  const sec = (Date.now() - r.t0) / 1000, t = $('#recTime'), w = $('#recWave');
+  if (t) t.textContent = fmtDur(Math.floor(sec));
+  if (w) w.innerHTML = r.peaks.slice(-28).map((v) => `<i style="height:${Math.max(12, Math.min(100, v * 380))}%"></i>`).join('');
+  if (sec >= REC_MAX) stopRec(true);
+}
+function endRec(r) {
+  clearInterval(r.tick);
+  r.stream?.getTracks().forEach((x) => x.stop());
+  r.ac?.close().catch(() => {});
+  $('#compose')?.classList.remove('recording', 'locked');
+}
+function cancelRec() {
+  const r = S.rec; if (!r) return;
+  S.rec = null;
+  if (r.rec && r.rec.state !== 'inactive') { r.rec.onstop = null; r.rec.stop(); }
+  endRec(r);
+}
+function stopRec(send) {
+  const r = S.rec; if (!r?.rec) return cancelRec();
+  S.rec = null;
+  const dur = (Date.now() - r.t0) / 1000;
+  r.rec.onstop = () => { endRec(r); if (send) sendVoice(new Blob(r.chunks, { type: r.rec.mimeType || 'audio/webm' }), dur, r.peaks); };
+  r.rec.stop(); clearInterval(r.tick);
+  $('#compose')?.classList.remove('recording', 'locked');
+}
+async function sendVoice(blob, dur, levels) {
+  if (blob.size < 800) return toast('Message vocal vide, réessayez.');
+  const type = blob.type.split(';')[0] || 'audio/webm', ext = /mp4|aac/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : 'webm';
+  // Forme de la voix : 40 barres de 10 à 100
+  const n = 40, step = Math.max(1, levels.length / n), raw = [];
+  for (let i = 0; i < Math.min(n, levels.length); i++) { const part = levels.slice(Math.floor(i * step), Math.floor((i + 1) * step)); raw.push(part.reduce((a, b) => a + b, 0) / (part.length || 1)); }
+  const top = Math.max(...raw, 0), flat = top < 0.005 || raw.length < 4; // voix non mesurée : forme par défaut à l'affichage
+  const peaks = flat ? null : raw.map((v) => Math.round(10 + (v / top) * 90));
+  S.attBusy = true; paintAttBtn();
+  try {
+    const up = await filesFn(`?action=upload&name=vocal.${ext}`, new File([blob], `vocal.${ext}`, { type }), type);
+    const ok = await sendMessage({ body: `🎤 Message vocal (${fmtDur(Math.round(dur))})`, attach_path: up.path, attach_name: 'Message vocal', attach_type: type, attach_size: up.size, attach_dur: Math.round(dur), voice_peaks: peaks });
+    if (!ok) await removeFile(up.path);
+  } catch (e) { fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
+  S.attBusy = false; paintAttBtn();
+}
+root.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-mic]'); if (!b || e.button > 0) return; e.preventDefault(); startRec(e, b); });
+root.addEventListener('pointermove', (e) => {
+  const r = S.rec; if (!r?.t0 || r.locked || e.pointerId !== r.pointer) return;
+  const dx = e.clientX - r.x0, dy = e.clientY - r.y0, f = $('#compose');
+  if (dx < -90) { cancelRec(); navigator.vibrate?.(30); return toast('Message vocal annulé'); }
+  if (dy < -70) { r.locked = true; f?.classList.add('locked'); navigator.vibrate?.(15); return; }
+  f?.style.setProperty('--slide', Math.min(0, dx) + 'px');
+});
+const recRelease = (e) => {
+  const r = S.rec; if (!r || e.pointerId !== r.pointer) return;
+  r.up = true; $('#compose')?.style.removeProperty('--slide');
+  if (!r.t0 || r.locked) return;
+  if (Date.now() - r.t0 < 700) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
+  stopRec(true);
+};
+root.addEventListener('pointerup', recRelease);
+root.addEventListener('pointercancel', recRelease);
+root.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-mic]')) e.preventDefault(); });
+const paintAttBtn = () => { const b = $('[data-plus]'); if (b) b.classList.toggle('busy', !!S.attBusy); };
 
 /* ---------- Mentions (@chef), comme dans WhatsApp ---------- */
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1294,7 +1496,6 @@ function quoteHtml(m) {
   const k = o?.member_id === S.me.id ? 'var(--green)' : grp(a?.group_id)?.color || 'var(--muted)';
   return `<button class="quote" ${o ? `data-jump="${o.id}"` : ''} style="--q:${k}"><b>${o ? (o.member_id === S.me.id ? 'Vous' : esc(display(a))) : 'Réponse'}</b><span>${o ? esc(msgPreview(o)) : m.reply_to ? 'Message plus ancien' : 'Message supprimé'}</span></button>`;
 }
-const chanObj = () => myChannels().find((x) => x.id === S.chan) || CHANNELS[0];
 const chanLabel = (c) => `${c.announce ? '📣' : '#'} ${esc(c.name)}`;
 const hm = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 function dayLabel(d) {
@@ -1305,9 +1506,9 @@ function dayLabel(d) {
 }
 // Bulles façon messagerie : les miennes à droite, les messages qui se suivent du même auteur sont regroupés
 function msgsHtml() {
-  const c = chanObj(), list = S.msgs[S.chan];
+  const c = convOf(S.chan), list = S.msgs[S.chan];
   if (!list) return '<p class="chatempty">Chargement…</p>';
-  if (!list.length) return `<p class="chatempty">${c.announce ? 'Aucune annonce pour l\'instant.' : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`;
+  if (!list.length) return `<p class="chatempty">${c.announce ? 'Aucune annonce pour l\'instant.' : c.dm ? `Écrivez votre premier message à ${esc(c.name)}. Cette conversation n'est visible que par vous deux.` : 'Aucun message pour l\'instant. Écrivez le premier !'}</p>`;
   let prev = null;
   // Un bloc par jour : la date reste collée en haut seulement pendant que ses messages défilent, puis la suivante la pousse
   return list.map((m, i) => {
@@ -1315,14 +1516,17 @@ function msgsHtml() {
     const day = isoD(new Date(m.created_at)), newDay = !prev || isoD(new Date(prev.created_at)) !== day;
     const cont = !newDay && prev.member_id === m.member_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 60000;
     prev = m;
-    const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length, att = !gif && !poll && m.attach_name;
+    const gif = m.gif_url && GIF_RE.test(m.gif_url), poll = !gif && m.poll_options?.length;
+    const voice = !gif && !poll && /^audio\//.test(m.attach_type || ''), att = !gif && !poll && !voice && m.attach_name;
+    const loc = m.loc_lat != null, ev = !!m.event_ref, card = voice || loc || ev;
     const media = att && m.attach_path && attKind(m) !== 'file';
     const body = gif
       ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
-      : poll ? pollHtml(m) : att ? attHtml(m) + (attOnly(m) ? '' : `<p>${bodyHtml(m)}</p>`) : `<p>${bodyHtml(m)}</p>`;
+      : poll ? pollHtml(m) : voice ? voiceHtml(m) : loc ? locHtml(m) : ev ? evCardHtml(m)
+      : att ? attHtml(m) + (attOnly(m) ? '' : `<p>${bodyHtml(m)}</p>`) : `<p>${bodyHtml(m)}</p>`;
     return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
-      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}${att ? ' isatt' : ''}${media && attOnly(m) ? ' ismedia' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
+      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}${att || card ? ' isatt' : ''}${voice ? ' isvoice' : ''}${media && attOnly(m) ? ' ismedia' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
       ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
   }).join('') + '</section>';
 }
@@ -1335,19 +1539,184 @@ function patchChat(toBottom) {
   if (near || toBottom) box.scrollTop = box.scrollHeight;
   paintBadges(); fillAttLinks();
 }
+/* ---------- Liste des conversations (canaux et messages privés), comme dans WhatsApp ---------- */
+const narrow = () => matchMedia('(max-width:860px)').matches;
+// Dernier message de chaque conversation (mise à jour SQL 17)
+async function loadOverview() {
+  if (!S.me) return;
+  const r = await sb.rpc('chat_overview'); if (r.error) return;
+  S.overview = Object.fromEntries(r.data.map((m) => [m.channel, m]));
+  paintConvList();
+}
+function setOverview(m) {
+  const o = S.overview[m.channel];
+  if (!o || new Date(m.created_at) >= new Date(o.created_at)) S.overview[m.channel] = m;
+}
+const fmtDur = (n) => `${Math.floor(n / 60)}:${String(Math.round(n % 60)).padStart(2, '0')}`;
+// « il y a » dans la liste : 5 min, 2 h, Hier, Lun., 12/10
+function relTime(d) {
+  const t = new Date(d), mins = Math.floor((Date.now() - t) / 60000);
+  if (mins < 1) return "À l'instant";
+  if (mins < 60) return `${mins} min`;
+  const day = isoD(t), td = today();
+  if (day === td) return `${Math.floor(mins / 60)} h`;
+  if (day === addDays(td, -1)) return 'Hier';
+  if (mins < 6 * 1440) return cap(t.toLocaleDateString('fr-FR', { weekday: 'short' }));
+  return t.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+}
+// En ligne si l'appli a donné signe de vie il y a moins de 3 minutes
+const isOnline = (m) => !!m?.last_seen_at && Date.now() - new Date(m.last_seen_at) < 3 * 60000;
+function seenText(m) {
+  if (!m?.last_seen_at) return '';
+  if (isOnline(m)) return 'en ligne';
+  const t = new Date(m.last_seen_at), mins = Math.floor((Date.now() - t) / 60000);
+  if (mins < 60) return `vu il y a ${mins} min`;
+  if (isoD(t) === today()) return `vu il y a ${Math.floor(mins / 60)} h`;
+  if (isoD(t) === addDays(today(), -1)) return `vu hier à ${hm(t)}`;
+  return `vu le ${t.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`;
+}
+// Une conversation : nom, couleur, icône, dernier message
+function convOf(id) {
+  if (isDmId(id)) {
+    const o = dmOther(id);
+    return { id, dm: true, other: o, name: o ? display(o) : 'Ancien membre', k: grp(o?.group_id)?.color || 'var(--muted)', icon: esc(initial(o)) };
+  }
+  const c = CHANNELS.find((x) => x.id === id) || CHANNELS[0];
+  return { id: c.id, dm: false, announce: !!c.announce, name: c.name, k: c.announce ? 'var(--green)' : pole(c.id)?.color || '#7a8b7c', icon: c.announce ? '📣' : '#' };
+}
+const convAv = (c, cls = '') => `<span class="cav${c.dm ? '' : ' ch'} ${cls}" style="--k:${c.k}">${c.icon}${c.dm && isOnline(c.other) ? '<i class="online"></i>' : ''}</span>`;
+function convList() {
+  const ids = new Set(myChannels().map((c) => c.id));
+  Object.keys(S.overview).forEach((ch) => { if (isDmId(ch) && seesChan(S.me, ch)) ids.add(ch); });
+  if (S.chan && isDmId(S.chan)) ids.add(S.chan); // nouvelle conversation pas encore commencée
+  const order = myChannels().map((c) => c.id);
+  return [...ids].map(convOf).sort((a, b) => {
+    const x = S.overview[a.id]?.created_at, y = S.overview[b.id]?.created_at;
+    if (x && y) return new Date(y) - new Date(x);
+    if (x || y) return x ? -1 : 1;
+    return order.indexOf(a.id) - order.indexOf(b.id);
+  });
+}
+// Aperçu d'un message : texte, ou le type de contenu
+function prevText(m) {
+  if (m.gif_url) return '🎞️ GIF';
+  if (m.poll_options) return '📊 Sondage : ' + m.body;
+  if (/^audio\//.test(m.attach_type || '')) return '🎤 Message vocal' + (m.attach_dur != null ? ` (${fmtDur(m.attach_dur)})` : '');
+  if (m.attach_name && attOnly(m)) { const k = attKind(m); return k === 'img' ? '📷 Photo' : k === 'vid' ? '🎥 Vidéo' : '📄 ' + m.attach_name; }
+  return m.body;
+}
+function convRow(c) {
+  const m = S.overview[c.id], n = S.unread[c.id] || 0, mine = m?.member_id === S.me.id;
+  const who = !m ? '' : mine ? (c.dm ? `<span class="tick">${seenBy(m).seen.length ? '✓✓' : '✓'}</span> Vous : ` : '<b>Vous :</b> ') : c.dm ? '' : `<b>${esc(display(member(m.member_id)))} :</b> `;
+  const line = m ? who + esc(prevText(m)) : c.dm ? 'Nouvelle conversation' : 'Aucun message pour l\'instant';
+  return `<button class="convrow${n ? ' unread' : ''}" data-conv="${esc(c.id)}" data-cname="${esc(fold(c.name))}" data-kind="${c.dm ? 'dm' : 'chan'}" aria-current="${S.chan === c.id}">
+    ${convAv(c)}<span class="cmain"><span class="ctop"><b>${esc(c.name)}</b>${m ? `<time>${relTime(m.created_at)}</time>` : ''}</span>
+    <span class="cbot"><span>${line}</span>${n ? `<i class="cbadge">${fmtN(n)}</i>` : ''}</span></span></button>`;
+}
+const CONV_FILTERS = [['all', 'Tout'], ['unread', 'Non lus'], ['chan', 'Canaux'], ['dm', 'Privés']];
+function convRowsHtml() {
+  const q = fold(S.convQ || '').trim(), f = S.convFilter || 'all';
+  const list = convList().filter((c) => (!q || fold(c.name).includes(q)) && (f === 'all' || (f === 'unread' ? S.unread[c.id] : f === 'dm' ? c.dm : !c.dm)));
+  if (list.length) return list.map(convRow).join('');
+  return `<p class="convnone">${f === 'dm' && !q ? 'Aucun message privé. Touchez « Nouveau » pour écrire à un chef.' : f === 'unread' && !q ? 'Tout est lu 👍' : 'Aucune conversation trouvée.'}</p>`;
+}
+function convListHtml() {
+  const nUnread = convList().filter((c) => S.unread[c.id]).length;
+  return `<div class="lhead"><h1>Discussion</h1><button class="newbtn" data-newdm>${ico('pencil')}<span>Nouveau</span></button></div>
+    <label class="convsearch">${ico('search')}<input type="search" id="convQ" placeholder="Rechercher un chef ou un canal" autocomplete="off" value="${esc(S.convQ || '')}"></label>
+    <div class="convchips" role="tablist">${CONV_FILTERS.map(([k, l]) => `<button role="tab" data-convfilter="${k}" aria-selected="${(S.convFilter || 'all') === k}">${l}${k === 'unread' && nUnread ? `<em>${nUnread}</em>` : ''}</button>`).join('')}</div>
+    <div class="convrows" id="convlist">${convRowsHtml()}</div>`;
+}
+// Met à jour la liste sans redessiner la page (la conversation ouverte et le clavier ne bougent pas)
+function paintConvList() {
+  const l = $('#convlist'); if (!l || S.view !== 'discussion') return;
+  l.innerHTML = convRowsHtml();
+  const n = convList().filter((c) => S.unread[c.id]).length, chip = $('[data-convfilter="unread"]');
+  if (chip) chip.innerHTML = 'Non lus' + (n ? `<em>${n}</em>` : '');
+}
+function convSub(c) {
+  if (c.dm) { const t = seenText(c.other); return t ? `<small class="${isOnline(c.other) ? 'ok' : ''}">${t}</small>` : `<small>${esc([grp(c.other?.group_id)?.name, poleNames(c.other || {})].filter(Boolean).join(' · '))}</small>`; }
+  const who = S.members.filter((x) => seesChan(x, c.id));
+  return `<small>${who.length} membre${who.length > 1 ? 's' : ''} · ${esc(who.slice(0, 4).map((x) => x.first_name).join(', '))}${who.length > 4 ? '…' : ''}</small>`;
+}
+const convHeadHtml = (c) => `<button class="convback" data-convback aria-label="Retour aux conversations">${ico('back')}</button>${convAv(c, 'sm')}<div class="convwho" id="convsub"><b>${esc(c.name)}</b>${convSub(c)}</div>`;
+function paintConvHead() { const h = $('#convhead'); if (h && S.chan) h.innerHTML = convHeadHtml(convOf(S.chan)); }
+function openConv(id) {
+  if (!seesChan(S.me, id)) return;
+  const wasOpen = !!S.chan;
+  S.chan = id; S.sheet = null; S.replyTo = null; S.plusOpen = false; closePicker();
+  try { history[wasOpen ? 'replaceState' : 'pushState']({ conv: 1 }, '', '#chat-' + id); } catch (e) {}
+  if (!S.msgs[id]) loadMessages(id); else markRead(id);
+  render();
+}
+function closeConv() {
+  if (S.rec) cancelRec();
+  S.chan = null; S.replyTo = null; S.plusOpen = false; closePicker(); stopVoice();
+  try { history.replaceState(null, '', '#discussion'); } catch (e) {}
+  render(); loadOverview();
+}
+// Le bouton « retour » du téléphone ferme la conversation
+window.addEventListener('popstate', () => { if (S.view === 'discussion' && S.chan && !location.hash.startsWith('#chat-')) closeConv(); });
+
 function vChat() {
-  if (!seesChan(S.me, S.chan)) { S.chan = 'annonces'; if (!S.msgs.annonces) loadMessages('annonces'); }
-  const c = chanObj(), other = myChannels().some((x) => x.id !== S.chan && S.unread[x.id]);
-  return `<div class="view chatview">
-  <div class="chathead"><h1>Discussion</h1>
-    <button class="chanbtn" data-chanpick aria-haspopup="dialog" aria-label="Canal : ${esc(c.name)}. Changer de canal"><span>${chanLabel(c)}</span><i class="cdot" id="chanDot" ${other ? '' : 'hidden'}></i>${ico('down')}</button></div>
-  <div class="card chat">
-    <div class="msgs" id="msgs" data-chan="${S.chan}">${msgsHtml()}</div>
+  if (S.chan && !seesChan(S.me, S.chan)) S.chan = null;
+  const c = S.chan ? convOf(S.chan) : null;
+  return `<div class="view chatview${c ? ' has-conv' : ''}">
+  <section class="convlist card">${convListHtml()}</section>
+  <section class="convpane card chat">${c ? `
+    <div class="convhead" id="convhead">${convHeadHtml(c)}</div>
+    <div class="msgs${c.dm ? ' dm' : ''}" id="msgs" data-chan="${esc(S.chan)}">${msgsHtml()}</div>
     <div class="replybar" id="replybar" ${S.replyTo ? '' : 'hidden'}>${replyBarHtml()}</div>
     <div class="picker" id="picker" ${S.picker ? '' : 'hidden'}>${pickerHtml()}</div>
     <div class="mentions" id="mentions" role="listbox" aria-label="Mentionner un chef" hidden></div>
-    <form class="compose" id="compose"><button type="button" class="cbtn pollbtn" data-pollnew aria-label="Créer un sondage">${ico('poll')}</button><button type="button" class="cbtn attbtn${S.attBusy ? ' busy' : ''}" data-attach aria-label="Joindre une photo, une vidéo ou un document" ${S.attBusy ? 'disabled' : ''}>${ico('clip')}</button><input type="file" id="attFile" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.txt" hidden><button type="button" class="cbtn gifbtn" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Écrire un message'}" aria-label="Message" maxlength="4000"></textarea><button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button></form>
-  </div></div>`;
+    <div class="plusmenu" id="plusmenu" ${S.plusOpen ? '' : 'hidden'}>${plusMenuHtml()}</div>
+    ${composeHtml(c)}` : '<div class="convempty">' + ico('chat', 46) + '<b>Vos conversations</b><span>Choisissez un canal ou un chef à gauche, ou touchez « Nouveau » pour écrire en privé.</span></div>'}
+  </section></div>`;
+}
+const PLUS_OPTS = [['media', 'Photo / vidéo', 'image', 'var(--c-purple)'], ['camera', 'Appareil photo', 'camera', 'var(--c-pink)'], ['doc', 'Document', 'doc', 'var(--c-blue)'],
+  ['poll', 'Sondage', 'poll', 'var(--c-yellow)'], ['loc', 'Position', 'pin', 'var(--green)'], ['event', 'Événement', 'cal', 'var(--c-cyan)']];
+const plusMenuHtml = () => `<div class="plusgrid">${PLUS_OPTS.map(([k, l, i, c]) => `<button type="button" data-plusopt="${k}"><span style="--k:${c}">${ico(i)}</span>${l}</button>`).join('')}</div>`;
+// Barre d'écriture : « + » à gauche, champ avec GIF à l'intérieur, micro à droite (flèche d'envoi dès qu'on écrit)
+function composeHtml(c) {
+  return `<form class="compose${S.rec ? ' recording' + (S.rec.locked ? ' locked' : '') : ''}" id="compose">
+    <button type="button" class="cbtn plus${S.plusOpen ? ' open' : ''}" data-plus aria-label="Joindre : photo, document, sondage…" aria-expanded="${!!S.plusOpen}">${ico('plus')}</button>
+    <div class="cfield"><textarea id="msgIn" rows="1" placeholder="${c.announce ? 'Écrire une annonce' : 'Message'}" aria-label="Message" maxlength="4000"></textarea>
+      <button type="button" class="gifin" data-pickertoggle aria-label="GIF" aria-expanded="${!!S.picker}">${S.picker ? ico('down') : '<span>GIF</span>'}</button></div>
+    <div class="recbar" aria-live="polite"><button type="button" class="cbtn trash" data-reccancel aria-label="Annuler l'enregistrement">${ico('trash')}</button>
+      <span class="recpill"><i class="recdot"></i><b id="recTime">0:00</b><span class="recwave" id="recWave"></span><small class="rechint">◀ glisser pour annuler</small></span></div>
+    <button type="button" class="cbtn mic" data-mic aria-label="Maintenir pour enregistrer un message vocal">${ico('mic')}</button>
+    <button class="cbtn send" type="submit" aria-label="${c.announce ? 'Publier' : 'Envoyer'}">${ico('send')}</button>
+    <span class="reclock" aria-hidden="true">${ico('lock', 16)}<i>▲</i></span>
+    <input type="file" id="attFile" accept="image/*,video/*" hidden><input type="file" id="camFile" accept="image/*" capture="environment" hidden>
+    <input type="file" id="docFile" accept="application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.txt" hidden></form>`;
+}
+// Avec du texte : la flèche d'envoi remplace le micro
+const syncCompose = () => { const f = $('#compose'), i = $('#msgIn'); if (f && i) f.classList.toggle('hastext', !!i.value.trim()); };
+function togglePlus(open = !S.plusOpen) {
+  S.plusOpen = open;
+  const m = $('#plusmenu'), b = $('[data-plus]'); if (m) m.hidden = !open;
+  if (b) { b.classList.toggle('open', open); b.setAttribute('aria-expanded', open); }
+  if (open) closePicker();
+}
+// Écrire en privé à un chef
+function newDmSheet() {
+  const list = S.members.filter((x) => x.id !== S.me.id).sort((a, b) => a.first_name.localeCompare(b.first_name, 'fr'));
+  return `<div class="modal" data-closemodal><div class="card sheet dmsheet" role="dialog" aria-modal="true" aria-labelledby="dmTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="dmTitle">Nouveau message</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <label class="convsearch">${ico('search')}<input type="search" id="dmQ" placeholder="Rechercher un prénom" autocomplete="off"></label>
+    <div class="chh">Chefs et cheftaines · ${list.length}</div>
+    <div class="dmlist">${list.map((x) => { const c = convOf(dmId(S.me.id, x.id)), g = grp(x.group_id);
+      return `<button class="convrow" data-dm="${x.id}" data-cname="${esc(fold(x.first_name + ' ' + display(x)))}">${convAv(c)}<span class="cmain"><span class="ctop"><b>${esc(display(x))}</b></span>
+        <span class="cbot"><span class="gline"><i style="--k:${g?.color || 'var(--muted)'}"></i>${esc([g?.name, poleNames(x)].filter(Boolean).join(' · ') || ROLES[x.role] || '')}${x.user_id ? '' : ' · pas encore de compte'}</span></span></span></button>`; }).join('')}</div>
+    <small class="hint">La conversation privée n'est visible que par vous deux.</small></div></div>`;
+}
+// Partager un rendez-vous du calendrier
+function evPickSheet() {
+  const seen = new Set(), list = occurrences(today(), addDays(today(), 180)).filter((o) => !seen.has(o.e.id) && seen.add(o.e.id)).slice(0, 40);
+  return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="epTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="epTitle">Partager un événement</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    <div class="dmlist">${list.map((o) => `<button class="convrow" data-evshare="${o.e.id}" data-evday="${o.start}"><span class="evday" style="--k:${evColor(o.e)}"><b>${parseD(o.start).getDate()}</b><small>${parseD(o.start).toLocaleDateString('fr-FR', { month: 'short' })}</small></span>
+      <span class="cmain"><span class="ctop"><b>${esc(o.e.title)}</b></span><span class="cbot"><span>${esc(shortWhen(o))}${o.e.location ? ' · ' + esc(o.e.location) : ''}</span></span></span></button>`).join('') || '<p class="convnone">Aucun événement à venir.</p>'}</div></div></div>`;
 }
 
 /* ---------- Réponses ---------- */
@@ -1454,9 +1823,10 @@ async function sendMessage(row) {
   const chan = S.chan, reply = S.replyTo;
   const tags = row.gif_url ? [] : findMentions(row.body);
   const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...(tags.length ? { mentions: tags } : {}), ...row }).select().single();
-  if (r.error) { fail(row.attach_path && ['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 15 dans Supabase") : row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
+  if (r.error) { fail((row.attach_dur != null || row.loc_lat != null || row.event_ref || isDmId(chan)) && (['PGRST204', '42703', '23514'].includes(r.error.code) || /row-level security/.test(r.error.message || '')) ? new Error("lancez d'abord la mise à jour SQL 17 dans Supabase") : row.attach_path && ['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 15 dans Supabase") : row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
   if (reply && S.replyTo === reply) setReply(null);
   const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
+  setOverview(r.data); paintConvList();
   if (S.chan === chan) patchChat(true);
   // Notifications : envoyées aux chefs qui suivent ce canal (choix fait avec la cloche)
   const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
@@ -1521,12 +1891,6 @@ function removeMsg(id) {
     S.msgs[ch] = S.msgs[ch].filter((x) => x.id !== id);
   }
   if (S.replyTo?.id === id) setReply(null);
-}
-function chanSheet() {
-  let lastH = '';
-  const items = myChannels().map((x) => { let h = ''; if (x.h !== lastH) { h = `<div class="chh">${esc(x.h)}</div>`; lastH = x.h; } return h + `<button class="chanitem" data-chan="${x.id}" aria-current="${x.id === S.chan}"><span>${chanLabel(x)}</span>${badge(x.id, true)}</button>`; }).join('');
-  return `<div class="modal" data-closemodal><div class="card sheet chansheet" role="dialog" aria-modal="true" aria-labelledby="chTitle">
-    <div class="row" style="justify-content:space-between"><h2 id="chTitle">Canaux</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>${items}</div></div>`;
 }
 function notifSheet() {
   const st = S.push;
@@ -1970,10 +2334,11 @@ function render() {
   const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'chan' ? chanSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
     : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
+  document.documentElement.classList.toggle('convopen', S.view === 'discussion' && !!S.chan);
   root.innerHTML = `<div class="app"><aside class="side">
     <p class="slogan">Le bonheur de l'Imam est la plus belle des récompenses</p>
     <div class="topline"><div class="brand"><img src="assets/logo.png" alt="Logo des Travailleurs de l'Imam"><div><b>Travailleurs<br>de l'Imam</b><small>Scouts · Bayt ul Mahdi</small></div></div>${bellHtml()}</div>
@@ -1985,6 +2350,8 @@ function render() {
   const ts = $('#tscroll'); if (ts) { ts.scrollTop = S.calScroll ?? 7 * HOUR_H; ts.addEventListener('scroll', () => (S.calScroll = ts.scrollTop), { passive: true }); }
   if (active === 'libQ') { const i = $('#libQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (draft && $('#msgIn')) { $('#msgIn').value = draft; growMsg(); }
+  syncCompose();
+  if (active === 'convQ') { const i = $('#convQ'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (active === 'msgIn') { const i = $('#msgIn'); i?.focus(); try { i.setSelectionRange(pos, pos); } catch (e) {} }
   if (!$('#msgIn')) document.documentElement.classList.remove('typing');
 }
@@ -2023,7 +2390,7 @@ document.addEventListener('focusout', (e) => {
   setTimeout(() => { if (!['msgIn', 'gifQ'].includes(document.activeElement?.id) && !S.picker) { document.documentElement.classList.remove('typing'); syncViewport(); } }, 120);
 });
 // Toucher le bouton Envoyer ou Emojis ne ferme pas le clavier
-root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn, .mentions button') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
+root.addEventListener('mousedown', (e) => { if (e.target.closest('.compose .cbtn, .compose .gifin, .mentions button') && document.activeElement?.id === 'msgIn') e.preventDefault(); });
 
 /* ---------- Événements ---------- */
 root.addEventListener('click', async (e) => {
@@ -2055,7 +2422,6 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-prayers]')) { S.sheet = 'prieres'; return render(); }
   const pu2 = t.closest('[data-prayuse]'); if (pu2) { if (pu2.dataset.prayuse === 'moi') return useMyPosition(); store.set('prayUseMe', false); return render(); }
   const ps = t.closest('[data-ppset]'); if (ps) { const a = S.ppResults?.[Number(ps.dataset.ppset)]; return a && setPrayPlace(a); }
-  if (t.closest('[data-chanpick]')) { S.sheet = 'chan'; return render(); }
   const nc = t.closest('[data-notifch]'); if (nc) { const id = nc.dataset.notifch; return setNotifCh(S.notifCh.includes(id) ? S.notifCh.filter((x) => x !== id) : [...S.notifCh, id]); }
   const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? NOTIF_IDS() : []);
   const cv = t.closest('[data-calview]'); if (cv) { S.calView = cv.dataset.calview; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; return render(); }
@@ -2088,16 +2454,23 @@ root.addEventListener('click', async (e) => {
   const g = t.closest('[data-go]'); if (g) { if (g.dataset.setpole) S.upPole = g.dataset.setpole; if (g.dataset.rectabgo) { S.recTab = g.dataset.rectabgo; S.recFilter = 'en_attente'; } return go(g.dataset.go); }
   const p = t.closest('[data-pole]'); if (p) { S.poleTab = p.dataset.pole; return render(); }
   const c = t.closest('[data-cat]'); if (c) { S.libCat = c.dataset.cat; return render(); }
-  const ch = t.closest('.chanitem[data-chan]'); if (ch) {
-    S.chan = ch.dataset.chan; S.sheet = null; S.replyTo = null; closePicker();
-    try { history.replaceState(null, '', '#chat-' + S.chan); } catch (e) {}
-    if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan);
-    return render();
-  }
+  // Discussion : liste des conversations, messages privés, bouton +
+  const cvo = t.closest('[data-conv]'); if (cvo) return openConv(cvo.dataset.conv);
+  if (t.closest('[data-convback]')) { if (history.state?.conv) history.back(); else closeConv(); return; }
+  const cfl = t.closest('[data-convfilter]'); if (cfl) { S.convFilter = cfl.dataset.convfilter; document.querySelectorAll('[data-convfilter]').forEach((b) => b.setAttribute('aria-selected', b === cfl)); return paintConvList(); }
+  if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
+  const dmb = t.closest('[data-dm]'); if (dmb) { S.sheet = null; return openConv(dmId(S.me.id, dmb.dataset.dm)); }
+  if (t.closest('[data-plus]')) { $('#msgIn')?.blur(); return togglePlus(); }
+  const pls = t.closest('[data-plusopt]'); if (pls) return plusOption(pls.dataset.plusopt);
+  const evs = t.closest('[data-evshare]'); if (evs) { S.sheet = null; render(); return shareEvent(evs.dataset.evshare); }
+  const evo = t.closest('[data-evopen]'); if (evo) return openSharedEvent(evo.dataset.evopen);
+  const vpl = t.closest('[data-vplay]'); if (vpl) return playVoice(vpl.dataset.vplay);
+  if (t.closest('[data-reccancel]')) return cancelRec();
+  if (t.closest('[data-mic]')) return; // l'enregistrement se fait en maintenant le bouton (voir plus bas)
   const o = t.closest('[data-open]'); if (o) return openDoc(o.dataset.open);
   const rx = t.closest('[data-emoji-r]'); if (rx) return toggleReaction(Number(rx.dataset.react), rx.dataset.emojiR);
   // Discussion : GIF, emojis, réponses, actions sur un message
-  if (t.closest('[data-pickertoggle]')) { if (S.picker) { closePicker(); $('#msgIn')?.focus(); } else { $('#msgIn')?.blur(); openPicker('gif'); } return; }
+  if (t.closest('[data-pickertoggle]')) { togglePlus(false); if (S.picker) { closePicker(); $('#msgIn')?.focus(); } else { $('#msgIn')?.blur(); openPicker('gif'); } return; }
   const gf = t.closest('[data-gif]'); if (gf) {
     const g = S.gifs?.[Number(gf.dataset.gif)]; if (!g) return;
     closePicker();
@@ -2105,7 +2478,6 @@ root.addEventListener('click', async (e) => {
   }
   if (t.closest('[data-replycancel]')) return setReply(null);
   // Sondages, « vu par » et mentions
-  if (t.closest('[data-attach]')) { closePicker(); $('#attFile')?.click(); return; }
   const ao = t.closest('[data-attopen]'); if (ao) return openAtt(ao.dataset.attopen);
   if (t.closest('[data-pollnew]')) { closePicker(); $('#msgIn')?.blur(); S.sheet = 'poll'; render(); $('#plQ')?.focus(); return; }
   const pm = t.closest('[data-pollmulti]'); if (pm) { S.pollDraft.multi = !S.pollDraft.multi; pm.setAttribute('aria-checked', S.pollDraft.multi); return; }
@@ -2195,7 +2567,7 @@ async function saveChatAccess(box) {
 }
 root.addEventListener('change', (e) => {
   if (e.target.id === 'upFile' && e.target.files.length) addFiles(e.target.files);
-  if (e.target.id === 'attFile' && e.target.files[0]) { const f = e.target.files[0]; e.target.value = ''; sendAttachment(f); }
+  if (['attFile', 'camFile', 'docFile'].includes(e.target.id) && e.target.files[0]) { const f = e.target.files[0]; e.target.value = ''; sendAttachment(f); }
   if (e.target.id === 'upPole') S.upPole = e.target.value;
   if (e.target.id === 'vitrineFile' && e.target.files[0]) setVitrine(e.target.files[0]);
   if (e.target.id === 'efAllDay') document.querySelectorAll('.timef').forEach((x) => (x.hidden = e.target.checked));
@@ -2214,8 +2586,10 @@ root.addEventListener('input', (e) => { if (e.target.id === 'admQ') { const q = 
 root.addEventListener('submit', async (e) => {
   const id = e.target.id;
   if (id === 'compose') {
-    e.preventDefault(); const v = $('#msgIn').value.trim(); if (!v) return;
-    $('#msgIn').value = ''; growMsg(); S.mention = null; paintMentions();
+    e.preventDefault();
+    if (S.rec) return stopRec(true); // vocal verrouillé : la flèche l'envoie
+    const v = $('#msgIn').value.trim(); if (!v) return;
+    $('#msgIn').value = ''; growMsg(); syncCompose(); S.mention = null; paintMentions();
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
   if (id === 'pollForm') { e.preventDefault(); return submitPoll(); }
@@ -2246,7 +2620,9 @@ root.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); }
 });
 root.addEventListener('input', (e) => {
-  if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); }
+  if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); syncCompose(); if (S.plusOpen) togglePlus(false); }
+  if (e.target.id === 'convQ') { S.convQ = e.target.value; paintConvList(); }
+  if (e.target.id === 'dmQ') { const q = fold(e.target.value.trim()); document.querySelectorAll('.dmlist [data-dm]').forEach((b) => (b.hidden = !!q && !b.dataset.cname.includes(q))); }
   if (e.target.matches('[data-pollq], [data-pollopt]')) pollInput(e.target);
   if (e.target.id === 'gifQ') { S.gifQ = e.target.value; clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs(S.gifQ.trim()), 350); }
 });
@@ -2325,13 +2701,15 @@ async function boot() {
     try { await loadAll(); lastRefresh = Date.now(); } catch (e) { fail(e); }
     if (S.me) { startRealtime(); loadVitrine(); loadUnread(); }
   }
-  const h = (location.hash || '').slice(1), hc = /^chat-([a-z]+)$/.exec(h);
+  const h = decodeURIComponent((location.hash || '').slice(1)), hc = /^chat-([a-z]+|dm:[0-9a-f:-]+)$/.exec(h);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
   else if (h === 'prieres') { S.view = 'accueil'; S.sheet = 'prieres'; }
   else if (hc && seesChan(S.me, hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
   else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
+  if (h === 'discussion' && narrow()) S.chan = null; // sur téléphone : la liste des conversations
   if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
-  if (S.view === 'discussion' && S.me) loadMessages(S.chan);
+  if (S.me) loadOverview();
+  if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
   render();
 }
 sb.auth.onAuthStateChange((event, session) => {
@@ -2343,8 +2721,8 @@ sb.auth.onAuthStateChange((event, session) => {
 });
 // Ouverture depuis une notification : #annonces ou #chat-<canal>
 window.addEventListener('hashchange', () => {
-  const m = /^#(?:chat-)?([a-z]+)$/.exec(location.hash);
-  const ch = m && myChannels().find((c) => c.id === m[1] && (location.hash.startsWith('#chat-') || c.id === 'annonces'));
-  if (ch && S.me) { S.view = 'discussion'; S.chan = ch.id; S.sheet = null; loadMessages(ch.id); render(); }
+  const h = decodeURIComponent(location.hash.slice(1)), m = /^(?:chat-)?([a-z]+|dm:[0-9a-f:-]+)$/.exec(h);
+  const id = m && (h.startsWith('chat-') || m[1] === 'annonces') ? m[1] : null;
+  if (id && S.me && seesChan(S.me, id) && id !== S.chan) { S.view = 'discussion'; S.chan = id; S.sheet = null; loadMessages(id); render(); }
 });
 boot();
