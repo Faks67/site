@@ -81,6 +81,11 @@ async function allowedMembers(admin: Db, channel: string): Promise<Set<string>> 
     || (m.pole_ids || []).includes(channel)
     || (m.chat_channels || []).includes(channel)).map((m: Member) => m.id));
 }
+// Chefs en train d'utiliser l'appli (mise à jour SQL 19) : ils voient le message dans l'appli, pas de notification
+async function activeMembers(admin: Db): Promise<Set<string>> {
+  const { data, error } = await admin.from('members').select('id').gt('active_until', new Date().toISOString());
+  return new Set(error ? [] : (data || []).map((m: { id: string }) => m.id));
+}
 // Appareils des chefs qui suivent ce canal (sans choix enregistré : les annonces)
 async function followers(admin: Db, channel: string, exceptMember?: string): Promise<Sub[]> {
   let q = admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id');
@@ -222,6 +227,8 @@ Deno.serve(async (req) => {
         const { data } = other ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').eq('member_id', other) : { data: [] };
         subs = data || [];
       } else subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
+      const active = await activeMembers(admin);
+      subs = subs.filter((s) => !active.has(s.member_id)); tagSubs = tagSubs.filter((s) => !active.has(s.member_id));
       const sent = await sendAll(admin, subs, JSON.stringify({
         title: isDm ? `💬 ${me.title} ${me.first_name}` : isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: short,
