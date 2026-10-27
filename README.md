@@ -125,6 +125,18 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
 2. Une réunion de pôle (événement avec des *Pôles concernés* cochés) n'est plus visible que par les membres de ces pôles, les administrateurs, la personne qui l'a créée et les chefs qui ont l'autorisation **Réunions de pôle** (à cocher dans *Administration*, fiche du chef > *Autorisations*). Les autres chefs ne la reçoivent pas du tout : ni calendrier, ni carte, ni accueil.
 3. L'autorisation **Calendrier** sert seulement à ajouter, modifier et supprimer des événements : elle ne permet plus de voir les réunions des autres pôles.
 
+## Mise à jour 17 : nouvelle Discussion (messages privés, vocaux, liste des conversations)
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/17-discussion-messages-prives.sql` et cliquer sur *Run*.
+2. **Fonction `notify`** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts`, puis *Deploy*. Un message privé prévient toujours l'autre chef.
+3. **Fonction `files`** : *Edge Functions > files > Code*, remplacer tout le code par le nouveau `supabase/functions/files/index.ts`, puis *Deploy* (*Verify JWT* reste désactivé). Les photos et vocaux d'une conversation privée ne sont lisibles que par les deux chefs.
+4. Dans le site :
+   - **Liste des conversations** : canaux et messages privés triés par dernier message, avec l'auteur, l'heure (5 min, 1 h, Hier…) et les non-lus ; recherche et filtres *Tout / Non lus / Canaux / Privés*.
+   - **Nouveau** : écrire en privé à n'importe quel chef. La conversation n'est visible que par les deux chefs, pas même par les administrateurs.
+   - **Barre d'écriture** : « + » (photo/vidéo, appareil photo, document, sondage, position, événement), GIF dans le champ, micro à droite (la flèche d'envoi apparaît dès qu'on écrit).
+   - **Message vocal** : maintenir le micro, relâcher pour envoyer ; glisser à gauche pour annuler, vers le haut pour verrouiller. Comme les autres pièces jointes, les vocaux sont effacés au bout de 30 jours.
+   - **En ligne / vu il y a…** : affiché dans les conversations privées.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |

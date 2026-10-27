@@ -856,3 +856,138 @@ table.praytable td:first-child,table.praytable th:first-child{text-align:left;fo
 .attfile.expired .ficon{background:var(--surface-2);color:var(--muted);font-size:1.1rem}
 .compose textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:420px){.compose{gap:2px}.compose .cbtn:not(.send){width:36px}}
+
+/* ===== Discussion : liste des conversations + conversation (comme WhatsApp) ===== */
+.chatview{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:14px;flex:1;min-height:0}
+.convlist{display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden}
+.convlist .lhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 14px 6px}
+.convlist .lhead h1{font-size:1.6rem}
+.newbtn{display:inline-flex;align-items:center;gap:6px;border:0;background:var(--green);color:var(--on-green);border-radius:99px;padding:8px 14px 8px 11px;font-weight:800;font-size:.86rem;box-shadow:0 4px 12px rgba(47,158,58,.28)}
+.newbtn svg{width:17px;height:17px}
+.convsearch{display:flex;align-items:center;gap:8px;margin:4px 14px 8px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:0 12px;color:var(--muted)}
+.convsearch svg{width:18px;height:18px;flex:none}
+.convsearch input{flex:1;min-width:0;border:0;background:none;padding:10px 0;font-size:.95rem;color:var(--fg);outline:none}
+.convchips{display:flex;gap:6px;padding:0 14px 10px;overflow-x:auto;scrollbar-width:none}
+.convchips button{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-weight:700;font-size:.8rem;color:var(--muted)}
+.convchips button[aria-selected="true"]{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.convchips em{font-style:normal;background:var(--green);color:#fff;border-radius:99px;padding:0 6px;margin-left:5px;font-size:.72rem}
+.convrows{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid var(--line)}
+.convrow{display:flex;align-items:center;gap:12px;width:100%;border:0;background:none;text-align:left;padding:10px 14px;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);color:var(--fg)}
+.convrow:hover{background:var(--surface-2)}
+.convrow[aria-current="true"]{background:var(--green-soft)}
+.cav{position:relative;flex:none;width:50px;height:50px;border-radius:50%;display:grid;place-items:center;background:var(--k,var(--green));color:#fff;font-family:var(--display);font-weight:800;font-size:1.15rem}
+.cav.ch{border-radius:16px;font-size:1.35rem}
+.cav.sm{width:40px;height:40px;font-size:1rem}.cav.sm.ch{border-radius:13px}
+.cav .online{position:absolute;right:0;bottom:1px;width:13px;height:13px;border-radius:50%;background:#35c24a;border:2.5px solid var(--surface)}
+.cmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ctop{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ctop b{font-weight:800;font-size:.97rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctop time{flex:none;font-size:.74rem;color:var(--muted)}
+.convrow.unread .ctop time{color:var(--green);font-weight:800}
+.cbot{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.cbot>span{font-size:.86rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cbot b{color:var(--fg);font-weight:700}
+.convrow.unread .cbot>span{color:var(--fg);font-weight:600}
+.cbot .tick{color:var(--c-cyan);letter-spacing:-2px;margin-right:2px}
+.cbadge{flex:none;font-style:normal;background:var(--green);color:#fff;font-weight:800;font-size:.72rem;min-width:20px;height:20px;border-radius:99px;display:grid;place-items:center;padding:0 6px}
+.convnone{color:var(--muted);text-align:center;padding:28px 20px;font-size:.9rem}
+.gline{display:inline-flex;align-items:center;gap:6px}
+.gline i{width:8px;height:8px;border-radius:50%;background:var(--k);flex:none}
+.convpane{position:relative}
+.convempty{margin:auto;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--muted);padding:30px;max-width:340px}
+.convempty svg{color:var(--green);opacity:.5}
+.convempty b{color:var(--fg);font-family:var(--display);font-size:1.2rem}
+.convhead{flex:none;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.convhead .convwho{flex:1;min-width:0;line-height:1.25;display:flex;flex-direction:column}
+.convhead .convwho b{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.convhead .convwho small{color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.convhead .convwho small.ok{color:var(--green);font-weight:700}
+.convback{display:none;border:0;background:none;color:var(--green-ink);padding:6px 2px;margin-left:-4px}
+.convback svg{width:24px;height:24px}
+.msgs.dm .msg .av,.msgs.dm .msg .mwho{display:none}
+.chh{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;padding:10px 4px 2px}
+.dmsheet{max-height:min(86dvh,760px)}
+.dmsheet .convsearch{margin:0}
+.dmlist{display:flex;flex-direction:column;overflow-y:auto;min-height:0;margin:0 -6px}
+.dmlist .convrow{border-radius:12px;border-bottom:0}
+.dmlist .cav{width:44px;height:44px;font-size:1rem}
+.evday{flex:none;width:46px;height:50px;border-radius:12px;background:color-mix(in srgb,var(--k,var(--green)) 16%,var(--surface));color:var(--k,var(--green));display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.evday b{font-family:var(--display);font-size:1.25rem}
+.evday small{font-size:.66rem;font-weight:800;text-transform:uppercase}
+
+/* Barre d'écriture : + | champ (GIF à l'intérieur) | micro ou flèche */
+.convpane .compose{position:relative;align-items:flex-end;gap:6px;padding:8px}
+.compose .cbtn.plus{background:var(--green-soft);color:var(--green-ink);transition:transform .2s,background .2s}
+.compose .cbtn.plus svg{width:24px;height:24px;stroke-width:2.4}
+.compose .cbtn.plus.open{background:var(--fg);color:var(--bg);transform:rotate(45deg)}
+.compose .cbtn.plus.busy{animation:pulse 1s ease-in-out infinite alternate}
+.cfield{flex:1;min-width:0;display:flex;align-items:flex-end;border:1px solid var(--line);background:var(--bg);border-radius:22px;padding-right:4px}
+.cfield:focus-within{border-color:var(--green)}
+.compose .cfield textarea{flex:1;border:0;background:none;border-radius:22px;padding:11px 6px 11px 16px;min-height:42px}
+.compose .cfield textarea:focus{border:0}
+.gifin{flex:none;border:0;background:none;width:38px;height:42px;display:grid;place-items:center;color:var(--muted)}
+.gifin span{border:1.6px solid currentColor;border-radius:7px;font-size:.62rem;font-weight:800;padding:1px 4px;letter-spacing:.03em}
+.gifin svg{width:20px;height:20px}
+.compose .cbtn.mic,.compose .cbtn.send{background:var(--green);color:var(--on-green);box-shadow:0 4px 12px rgba(47,158,58,.3)}
+.compose .cbtn.mic{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.compose .cbtn.mic svg{width:22px;height:22px}
+.compose .send{display:none}
+.compose.hastext .send{display:grid}.compose.hastext .mic{display:none}
+.recbar,.reclock{display:none}
+.compose.recording .plus,.compose.recording .cfield{display:none}
+.compose.recording .recbar{display:flex;flex:1;min-width:0;align-items:center;gap:6px}
+.compose.recording .mic{display:grid;transform:scale(1.15);background:var(--c-red)}
+.compose.recording .send{display:none}
+.compose.recording .cbtn.trash{visibility:hidden;color:var(--c-red);background:color-mix(in srgb,var(--c-red) 12%,var(--surface))}
+.compose.recording.locked .cbtn.trash{visibility:visible}
+.compose.recording.locked .mic{display:none}
+.compose.recording.locked .send{display:grid}
+.recpill{flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:42px;border-radius:21px;padding:0 14px;background:color-mix(in srgb,var(--c-red) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--c-red) 30%,var(--surface));color:var(--c-red);transform:translateX(var(--slide,0px))}
+.recdot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--c-red);animation:pulse .8s ease-in-out infinite alternate}
+.recpill b{font-variant-numeric:tabular-nums;font-size:.95rem}
+.recwave{flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:2px;height:26px;overflow:hidden}
+.recwave i{flex:none;width:3px;border-radius:2px;background:currentColor}
+.rechint{flex:none;font-size:.72rem;font-weight:700;color:var(--muted)}
+.compose.locked .rechint{display:none}
+.compose.recording:not(.locked) .reclock{display:flex;position:absolute;right:13px;bottom:62px;width:40px;padding:9px 0;border-radius:20px;background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,.16);flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:.6rem;font-style:normal}
+.reclock i{font-style:normal}
+/* Menu + */
+.plusmenu{position:absolute;left:8px;right:8px;bottom:64px;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:16px 8px 12px;box-shadow:0 12px 40px rgba(0,0,0,.2);max-width:420px}
+.plusgrid{display:grid;grid-template-columns:repeat(3,1fr);row-gap:16px}
+.plusgrid button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:7px;font-size:.8rem;font-weight:700;color:var(--fg)}
+.plusgrid button span{width:54px;height:54px;border-radius:17px;display:grid;place-items:center;color:#fff;background:var(--k)}
+.plusgrid button span svg{width:25px;height:25px}
+/* Vocal, position, événement dans les bulles */
+.bubble.isvoice{min-width:220px}
+.voice{display:flex;align-items:center;gap:9px;min-width:200px;padding:2px 0}
+.vplay{flex:none;width:36px;height:36px;border-radius:50%;border:0;background:var(--green);color:#fff;font-size:.8rem;display:grid;place-items:center;padding:0 0 0 2px}
+.msg.mine .vplay{background:#fff;color:var(--green)}
+.vwave{flex:1;display:flex;align-items:center;gap:2px;height:28px;min-width:0}
+.vwave i{flex:1;max-width:4px;min-width:2px;border-radius:2px;background:currentColor;opacity:.4}
+.vwave i.p{opacity:1}
+.vdur{flex:none;font-size:.74rem;opacity:.85;font-variant-numeric:tabular-nums}
+.loccard,.evcard{display:flex;align-items:center;gap:10px;text-align:left;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:12px;padding:8px 12px 8px 8px;max-width:300px}
+.locpin{flex:none;width:46px;height:46px;border-radius:12px;background:var(--green-soft);color:var(--green-ink);display:grid;place-items:center}
+.locpin svg{width:24px;height:24px}
+.locmain{display:flex;flex-direction:column;gap:2px;min-width:0}
+.locmain b{font-size:.9rem}
+.locmain small{color:var(--muted);font-size:.75rem}
+.locmain .row{gap:6px;margin-top:4px}
+.locmain .btn.small{padding:4px 9px;font-size:.76rem}
+.evopen{font-size:.74rem;font-weight:800;color:var(--green-ink);margin-top:2px}
+.evcard.off{opacity:.7}
+
+@media (max-width:860px){
+  .chatview{display:flex;flex-direction:column;gap:0}
+  .chatview.has-conv .convlist,.chatview:not(.has-conv) .convpane{display:none}
+  html.chatmode .convlist{flex:1;border-radius:16px}
+  .convback{display:block}
+  html.convopen .side,html.convopen .tabbar{display:none}
+  html.convopen.chatmode .app{grid-template-rows:minmax(0,1fr)}
+  html.convopen.chatmode main{padding:0}
+  html.convopen .convpane{border-radius:0;border:0;box-shadow:none;flex:1;padding-top:env(safe-area-inset-top,0px)}
+  html.convopen .convpane .compose{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+  html.convopen.typing .convpane .compose{padding-bottom:8px}
+  .plusmenu{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  .compose.recording:not(.locked) .reclock{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+}

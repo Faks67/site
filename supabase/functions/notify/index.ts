@@ -72,6 +72,8 @@ async function sendAll(admin: Db, subs: Sub[], payload: string, ttl = 86400) {
 const OPEN_CHANNELS = ['annonces', 'general', 'prieres'];
 type Member = { id: string; is_admin: boolean; pole_id: string | null; pole_ids: string[] | null; chat_channels: string[] | null };
 async function allowedMembers(admin: Db, channel: string): Promise<Set<string>> {
+  // Conversation privée « dm:<chef>:<chef> » : les deux chefs seulement (mise à jour SQL 17)
+  if (channel.startsWith('dm:')) return new Set(channel.split(':').slice(1, 3));
   const { data } = await admin.from('members').select('id, is_admin, pole_id, pole_ids, chat_channels');
   const { data: poles } = await admin.from('poles').select('id');
   const isPole = !OPEN_CHANNELS.includes(channel) && (poles || []).some((p: { id: string }) => p.id === channel);
@@ -200,7 +202,7 @@ Deno.serve(async (req) => {
       if (!msg || msg.member_id !== me.id) return json({ error: 'message introuvable' }, 400);
 
       webpush.setVapidDetails(SITE_URL, keys.publicKey, keys.privateKey);
-      const isAnnonce = msg.channel === 'annonces';
+      const isAnnonce = msg.channel === 'annonces', isDm = msg.channel.startsWith('dm:');
       const url = SITE_URL + (isAnnonce ? '#annonces' : '#chat-' + msg.channel);
       const text = msg.poll_options ? `📊 Sondage : ${msg.body}` : msg.body;
       const short = text.length > 180 ? text.slice(0, 177) + '…' : text;
@@ -213,16 +215,22 @@ Deno.serve(async (req) => {
         const { data } = await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').in('member_id', [...tagged]);
         tagSubs = data || [];
       }
-      const subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
+      // Message privé : l'autre chef est toujours prévenu (pas de choix de canal à faire)
+      let subs: Sub[];
+      if (isDm) {
+        const other = [...allowed].find((id) => id !== me.id);
+        const { data } = other ? await admin.from('push_subscriptions').select('endpoint, p256dh, auth, member_id').eq('member_id', other) : { data: [] };
+        subs = data || [];
+      } else subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
       const sent = await sendAll(admin, subs, JSON.stringify({
-        title: isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
+        title: isDm ? `💬 ${me.title} ${me.first_name}` : isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: short,
         url,
         // Une notification par annonce ; pour les autres canaux, la dernière remplace la précédente
         tag: isAnnonce ? 'annonce-' + msg.id : 'chat-' + msg.channel,
         renotify: !isAnnonce
       }));
-      const sentTags = tagSubs.length ? await sendAll(admin, tagSubs, JSON.stringify({
+      const sentTags = tagSubs.length && !isDm ? await sendAll(admin, tagSubs, JSON.stringify({
         title: `@ ${me.title} ${me.first_name} vous a mentionné·e · ${CHANNEL_NAMES[msg.channel] || msg.channel}`,
         body: short,
         url,
