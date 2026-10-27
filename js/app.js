@@ -510,9 +510,11 @@ document.addEventListener('visibilitychange', () => {
 checkVersion();
 
 /* ---------- Navigation ---------- */
-const NAV = [['accueil', 'Accueil', 'home'], ['defi', 'Défi', 'trophy'], ['assistant', 'Assistant', 'spark'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group'], ['sep', 'Ressources'], ['bibliotheque', 'Bibliothèque', 'lib'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['discussion', 'Discussion', 'chat']];
+// Menu de l'ordinateur : l'essentiel, puis l'équipe, le Défi et l'assistant, et l'administration en dernier
+const NAV = [['accueil', 'Accueil', 'home'], ['discussion', 'Discussion', 'chat'], ['calendrier', 'Calendrier', 'cal'], ['presences', 'Présences', 'check'], ['localisation', 'Localisation', 'pin'], ['bibliotheque', 'Bibliothèque', 'lib'], ['sep', 'Équipe'], ['organigramme', 'Organigramme', 'org'], ['poles', 'Pôles', 'pole'], ['groupes', 'Groupes', 'group']];
+const NAV_END = [['sep', 'Pour aller plus loin'], ['defi', 'Défi', 'trophy'], ['assistant', 'Assistant', 'spark']];
 function navHtml() {
-  const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], canAdminPage() ? [['administration', 'Administration', 'admin']] : []);
+  const items = NAV.concat(canRecl() ? [['reclamations', 'Réclamations', 'euro']] : [], NAV_END, canAdminPage() ? [['sep', 'Gestion'], ['administration', 'Administration', 'admin']] : []);
   return items.map((n) => n[0] === 'sep' ? `<div class="sep">${n[1]}</div>` : `<button data-v="${n[0]}" ${S.view === n[0] ? 'aria-current="page"' : ''}>${ico(n[2])}<span class="lbl">${n[1]}</span>${n[0] === 'discussion' ? badge('total', true) : ''}${n[0] === 'defi' ? quizDot(true) : ''}</button>`).join('')
     + `<button data-logout class="mobile-only">${ico('out')}<span class="lbl">Déconnexion</span></button>`;
 }
@@ -3771,7 +3773,7 @@ function route() {
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
   else if (h === 'prieres') { S.view = 'accueil'; S.sheet = 'prieres'; }
   else if (hc && seesChan(S.me, hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
-  else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
+  else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV, ...NAV_END].map((n) => n[0]).concat('administration', 'reclamations').includes(h)) S.view = h;
   if (h === 'discussion' && narrow()) S.chan = null; // sur téléphone : la liste des conversations
 }
 sb.auth.onAuthStateChange((event, session) => {
