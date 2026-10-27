@@ -536,6 +536,7 @@ function badge(key, inline) {
   return `<b class="nbadge${inline ? ' inl' : ''}" ${key === 'total' ? 'data-badge="total"' : `data-badge-ch="${key}"`} ${n ? '' : 'hidden'} aria-label="messages non lus">${fmtN(n)}</b>`;
 }
 function go(v) {
+  if (v !== 'discussion') releaseMic();
   S.view = v; S.moreOpen = false; S.evModal = null; S.sheet = null;
   try { history.replaceState(null, '', '#' + v); } catch (e) {}
   if (v === 'discussion') {
@@ -1483,7 +1484,9 @@ function takeMic() {
   clearTimeout(w.t);
   return w.stream.getAudioTracks().some((t) => t.readyState === 'live') ? w.stream : null;
 }
-function keepMic(stream) { if (!stream) return; releaseMic(); micWarm = { stream, t: setTimeout(releaseMic, 20000) }; }
+// Sur iPhone, l'appli installée redemande l'autorisation à chaque ouverture du micro :
+// il reste donc ouvert tant que la conversation est ouverte (fermé en la quittant ou en quittant l'appli)
+function keepMic(stream) { if (!stream) return; releaseMic(); micWarm = { stream, t: isIOS() ? null : setTimeout(releaseMic, 20000) }; }
 function releaseMic() { if (!micWarm) return; clearTimeout(micWarm.t); micWarm.stream.getTracks().forEach((t) => t.stop()); micWarm = null; }
 document.addEventListener('visibilitychange', () => { if (document.hidden && !S.rec) releaseMic(); });
 const recCls = (...c) => { const f = $('#compose'); if (f) { f.classList.remove('recording', 'locked', 'arming', 'review', 'willcancel'); f.classList.add(...c); } };
@@ -1976,7 +1979,7 @@ function openConv(id) {
 }
 function closeConv() {
   if (S.rec) cancelRec();
-  discardReview();
+  discardReview(); releaseMic();
   if (S.typingSent) sendTyping(false);
   S.chan = null; S.replyTo = null; S.plusOpen = false; closePicker(); stopVoice();
   try { history.replaceState(null, '', '#discussion'); } catch (e) {}
@@ -2318,12 +2321,13 @@ function notifSheet() {
     ${dev}
     <div class="row" style="justify-content:space-between"><b>Me prévenir pour</b><span class="row" style="gap:6px"><button class="btn small" data-notifall="all">Tout</button><button class="btn small" data-notifall="none">Aucun</button></span></div>
     <div class="switches">${myChannels().map((c) => `<button class="switchrow" role="switch" data-notifch="${c.id}" aria-checked="${S.notifCh.includes(c.id)}"><span>${chanLabel(c)}</span><i class="sw" aria-hidden="true"></i></button>`).join('')}
+      <button class="switchrow" role="switch" data-notifcalls aria-checked="${!S.notifCh.includes('sans-appels')}"><span>📞 Appels<small class="hint" style="display:block;font-weight:400">Appels privés et appels de groupe de vos canaux, même si le canal est en sourdine</small></span><i class="sw" aria-hidden="true"></i></button>
       <button class="switchrow" role="switch" data-notifch="prieres" aria-checked="${S.notifCh.includes('prieres')}"><span>🕌 Heures de prière<small class="hint" style="display:block;font-weight:400">10 min avant Fajr, Dhuhr et Maghrib</small></span><i class="sw" aria-hidden="true"></i></button></div>
     <small class="hint">Vos choix valent pour tous vos appareils. Pour ne plus rien recevoir, choisissez « Aucun » ou coupez les notifications sur ce téléphone.</small>
   </div></div>`;
 }
 // Canaux de discussion + alertes de prière
-const NOTIF_IDS = () => [...myChannels().map((c) => c.id), 'prieres'];
+const NOTIF_IDS = () => [...myChannels().map((c) => c.id), 'prieres', 'sans-appels'];
 async function setNotifCh(next) {
   const prev = S.notifCh; S.notifCh = NOTIF_IDS().filter((id) => next.includes(id)); render();
   const r = await sb.from('notif_prefs').upsert({ member_id: S.me.id, channels: S.notifCh, updated_at: new Date().toISOString() });
@@ -2331,7 +2335,7 @@ async function setNotifCh(next) {
 }
 
 /* ---------- Notifications sur téléphone (Web Push) ---------- */
-const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPad compris
 const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 function b64ToBytes(b64) {
@@ -2751,7 +2755,7 @@ let quizBoardAt = 0, quizTimer = null;
 let quizLoading = null;
 function loadQuiz() { if (!S.me) return; return (quizLoading ||= loadQuizNow().finally(() => { quizLoading = null; })); }
 async function loadQuizNow() {
-  const r = await sb.rpc('quiz_status'); if (r.error) { S.quiz = null; return; }
+  const r = await sb.rpc('quiz_status'); if (r.error || !r.data) { S.quiz = null; return; }
   const before = JSON.stringify(S.quiz ?? null), prevDay = S.quiz?.day; S.quiz = r.data;
   if (!S.quizBoard || prevDay !== r.data.day) loadQuizBoard();
   if (before !== JSON.stringify(S.quiz) && !userBusy() && S.view !== 'discussion' && S.sheet !== 'quiz') render();
@@ -3085,6 +3089,8 @@ async function loadCalls(ids) {
   if (S.view === 'discussion' && S.chan) { patchChat(); paintCallJoin(); }
 }
 let activeAt = 0;
+// Appel à afficher au lancement (notification « Appel de… » touchée) : ?call=<id> dans l'adresse
+let pendingCall = (() => { try { const u = new URL(location.href), id = u.searchParams.get('call'); if (id) { u.searchParams.delete('call'); history.replaceState(null, '', u.pathname + u.search + u.hash); } return /^[0-9a-f-]{36}$/.test(id || '') ? id : null; } catch (e) { return null; } })();
 async function loadActiveCalls() {
   if (!S.me) return;
   activeAt = Date.now();
@@ -3093,6 +3099,13 @@ async function loadActiveCalls() {
   S.activeCalls = {};
   r.data.forEach((c) => { S.calls[c.id] = c; S.activeCalls[c.channel] = c; });
   paintCallJoin();
+  // Ouvert en touchant la notification d'appel : l'écran d'appel s'affiche tant que l'appel continue
+  if (pendingCall) {
+    const id = pendingCall; pendingCall = null;
+    const c = r.data.find((x) => x.id === id);
+    if (c && !c.active.includes(S.me.id) && seesChan(S.me, c.channel)) return ringIn(c);
+    if (!c) toast("L'appel est terminé.");
+  }
   // Ouvert depuis la notification « Appel de… » : l'appel sonne s'il vient de commencer
   for (const c of r.data) if (isDmId(c.channel) && c.started_by !== S.me.id && !c.active.includes(S.me.id) && Date.now() - Date.parse(c.started_at) < 45000) ringIn(c);
 }
@@ -3136,6 +3149,13 @@ const AUDIO_OPTS = { echoCancellation: true, noiseSuppression: true, autoGainCon
 const CAM_OPTS = (facing) => ({ facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } });
 async function callMedia(kind) {
   const audio = AUDIO_OPTS;
+  // Micro déjà ouvert pour les vocaux : on le reprend (pas de nouvelle demande d'autorisation sur iPhone)
+  const warm = takeMic();
+  if (warm) {
+    if (kind !== 'video') return warm;
+    try { (await navigator.mediaDevices.getUserMedia({ video: CAM_OPTS('user') })).getVideoTracks().forEach((t) => warm.addTrack(t)); } catch (e) { toast('Caméra indisponible : appel en audio'); }
+    return warm;
+  }
   try { return await navigator.mediaDevices.getUserMedia({ audio, video: kind === 'video' ? CAM_OPTS('user') : false }); }
   catch (e) {
     if (kind === 'video') { try { const s = await navigator.mediaDevices.getUserMedia({ audio }); toast('Caméra indisponible : appel en audio'); return s; } catch (e2) { /* ci-dessous */ } }
@@ -3192,19 +3212,20 @@ async function callJoin(id) {
 function ringIn(call) {
   if (CALL || RING || !call || call.ended_at) return;
   const from = member(call.started_by); if (!from) return;
+  const dm = isDmId(call.channel), conv = convOf(call.channel);
   RING = { call, stop: callTone('in') };
   RING.ch = sb.channel('call-' + call.id, { config: { broadcast: { self: false } } })
     .on('broadcast', { event: 'end' }, () => stopRing('Appel manqué')).subscribe();
   RING.timer = setTimeout(() => stopRing('Appel manqué'), 45000);
   const el = document.createElement('div'); el.id = 'callring'; el.className = 'callring'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Appel entrant');
-  el.innerHTML = `<div class="crtop"><span class="crav" style="--k:${grp(from.group_id)?.color || 'var(--green)'}">${esc(initial(from))}</span><h2>${esc(display(from))}</h2><p>Appel ${call.kind === 'video' ? 'vidéo' : 'audio'} entrant…</p></div>
+  el.innerHTML = `<div class="crtop"><span class="crav" style="--k:${grp(from.group_id)?.color || 'var(--green)'}">${esc(initial(from))}</span><h2>${esc(dm ? display(from) : conv.name)}</h2><p>${dm ? `Appel ${call.kind === 'video' ? 'vidéo' : 'audio'} entrant…` : `${esc(display(from))} a lancé un appel ${call.kind === 'video' ? 'vidéo' : 'audio'}`}</p></div>
     <div class="crbtns"><button type="button" data-ring="no"><span class="red">${svg(CI.hang, 28)}</span>Refuser</button>
     ${call.kind === 'video' ? `<button type="button" data-ring="audio"><span class="gl">${svg(CI.phone, 28)}</span>Audio seul</button>` : ''}
-    <button type="button" data-ring="${call.kind}"><span class="grn">${svg(call.kind === 'video' ? CI.cam : CI.phone, 28)}</span>Répondre</button></div>`;
+    <button type="button" data-ring="${call.kind}"><span class="grn">${svg(call.kind === 'video' ? CI.cam : CI.phone, 28)}</span>${dm ? 'Répondre' : 'Rejoindre'}</button></div>`;
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-ring]'); if (!b) return;
     const k = b.dataset.ring, c = RING?.call;
-    if (k === 'no') { RING?.ch?.send({ type: 'broadcast', event: 'decline', payload: {} }); return stopRing(); }
+    if (k === 'no') { if (dm) RING?.ch?.send({ type: 'broadcast', event: 'decline', payload: {} }); return stopRing(); }
     stopRing(); if (!c) return;
     S.calls[c.id] = c;
     const ice = iceServers(), media = await callMedia(k); if (!media) return;
@@ -3359,7 +3380,11 @@ function callHangup(endForAll, msg) {
   [c.mic, c.cam, c.scr, c.scrA].forEach((t) => t?.stop());
   try { c.wake?.release(); } catch (e) { /* facultatif */ }
   setTimeout(() => sb.removeChannel(c.ch), 300);
-  sb.rpc('call_leave', { p_call: c.id, p_end: !!(c.dm && endForAll) }).then(() => loadActiveCalls());
+  sb.rpc('call_leave', { p_call: c.id, p_end: !!(c.dm && endForAll) }).then(() => {
+    loadActiveCalls();
+    // Personne n'a décroché : la notification de l'autre devient « Appel manqué »
+    if (c.dm && c.outgoing && !c.hadPeer) sb.functions.invoke('notify', { body: { action: 'missed', call_id: c.id } }).catch(() => {});
+  });
   $('#callui')?.remove();
   if (msg) toast(msg);
   if (S.view === 'discussion') { patchChat(); paintCallJoin(); }
@@ -3642,7 +3667,8 @@ root.addEventListener('click', async (e) => {
   const pu2 = t.closest('[data-prayuse]'); if (pu2) { if (pu2.dataset.prayuse === 'moi') return useMyPosition(); store.set('prayUseMe', false); return render(); }
   const ps = t.closest('[data-ppset]'); if (ps) { const a = S.ppResults?.[Number(ps.dataset.ppset)]; return a && setPrayPlace(a); }
   const nc = t.closest('[data-notifch]'); if (nc) { const id = nc.dataset.notifch; return setNotifCh(S.notifCh.includes(id) ? S.notifCh.filter((x) => x !== id) : [...S.notifCh, id]); }
-  const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? NOTIF_IDS() : []);
+  const na = t.closest('[data-notifall]'); if (na) return setNotifCh(na.dataset.notifall === 'all' ? NOTIF_IDS().filter((x) => x !== 'sans-appels') : ['sans-appels']);
+  if (t.closest('[data-notifcalls]')) return setNotifCh(S.notifCh.includes('sans-appels') ? S.notifCh.filter((x) => x !== 'sans-appels') : [...S.notifCh, 'sans-appels']);
   const cv = t.closest('[data-calview]'); if (cv) { if (S.calView === cv.dataset.calview) return; S.calView = cv.dataset.calview; S.calScroll = null; if (S.calView === 'mois') S.calSel = S.calSel || S.calDate; if (S.calView === 'liste' && S.calDate < today() && today().slice(0, 7) === S.calDate.slice(0, 7)) S.calDate = today(); return calPaint(); }
   const cn = t.closest('[data-calnav]'); if (cn) { const n = Number(cn.dataset.calnav); calMove(n); return calPaint(n); }
   if (t.closest('[data-caltoday]')) { S.calDate = S.calSel = today(); S.calScroll = null; return calPaint(); }
