@@ -159,34 +159,56 @@ root.addEventListener('submit', async (e) => {
   if (!S.session || authMode !== 'login' || authErr || authMsg) render();
 });
 
+/* ---------- Démarrage immédiat : copie locale de la dernière session ----------
+   L'appli s'affiche tout de suite avec ce qu'elle connaissait, puis se met à jour. Effacée à la déconnexion. */
+const SNAP_KEY = 'tdi-session-v1';
+let snapTimer = null;
+function saveSnap() {
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => {
+    if (!S.me || !S.session) return;
+    const keep = [S.chan, ...convList().slice(0, 8).map((c) => c.id)].filter(Boolean);
+    const msgs = {}; keep.forEach((ch) => { if (S.msgs[ch]) msgs[ch] = S.msgs[ch].filter((m) => !m.pending).slice(-40); });
+    const snap = { uid: S.session.user.id, at: Date.now(), members: S.members, groups: S.groups, poles: S.poles, docs: S.docs, events: S.events,
+      absences: S.absences, notifCh: S.notifCh, pinned: S.pinned, unread: S.unread, overview: Object.fromEntries(Object.entries(S.overview).filter(([, m]) => !m.pending)), msgs };
+    try { localStorage.setItem(SNAP_KEY, JSON.stringify(snap)); } catch (e) { try { delete snap.msgs; delete snap.docs; localStorage.setItem(SNAP_KEY, JSON.stringify(snap)); } catch (e2) { /* stockage plein : tant pis */ } }
+  }, 1500);
+}
+function readSnap(uid) {
+  try { const s = JSON.parse(localStorage.getItem(SNAP_KEY)); return s && s.uid === uid && Date.now() - s.at < 30 * 864e5 ? s : null; } catch (e) { return null; }
+}
+function applySnap(sn) {
+  Object.assign(S, { members: sn.members || [], groups: sn.groups || [], poles: sn.poles || [], docs: sn.docs || [], events: sn.events || [], absences: sn.absences || [],
+    notifCh: sn.notifCh || ['annonces'], pinned: sn.pinned || [], unread: sn.unread || {}, overview: sn.overview || {}, msgs: sn.msgs || {} });
+  S.me = S.members.find((x) => x.user_id === S.session.user.id) || null;
+}
+const clearSnap = () => { try { localStorage.removeItem(SNAP_KEY); } catch (e) { /* rien à effacer */ } };
+
 /* ---------- Chargement des données ---------- */
 async function loadAll() {
-  const [m, g, p, d, ev] = await Promise.all([
+  // Tout est demandé en même temps (un seul aller-retour) ; les règles d'accès de la base filtrent ce que chacun reçoit
+  const [m, g, p, d, ev, inv, rc, ab, np, pp] = await Promise.all([
     sb.from('members').select('*').order('first_name'),
     sb.from('groups').select('*').order('sort'),
     sb.from('poles').select('*').order('sort'),
     sb.from('documents').select('*').order('created_at', { ascending: false }),
-    sb.from('events').select('*').order('date')
+    sb.from('events').select('*').order('date'),
+    sb.from('invitations').select('*'),
+    sb.from('reclamations').select('*').order('created_at', { ascending: false }),
+    sb.from('event_absences').select('event_id, occ_date, member_id').gte('occ_date', addDays(today(), -62)),
+    sb.from('notif_prefs').select('*').maybeSingle(), // seulement ma ligne (règle d'accès)
+    sb.from('app_settings').select('value').eq('key', 'prayer_place').maybeSingle()
   ]);
   for (const r of [m, g, p, d, ev]) if (r.error) throw r.error;
   S.members = m.data; S.groups = g.data; S.poles = p.data; S.docs = d.data; S.events = ev.data;
   S.me = S.members.find((x) => x.user_id === S.session.user.id) || null;
-  if (can('membres')) {
-    const inv = await sb.from('invitations').select('*'); if (!inv.error) S.invitations = inv.data;
-  }
-  if (canRecl()) {
-    const rc = await sb.from('reclamations').select('*').order('created_at', { ascending: false }); if (!rc.error) S.reclamations = rc.data;
-  } else S.reclamations = [];
+  if (can('membres') && !inv.error) S.invitations = inv.data;
+  S.reclamations = canRecl() && !rc.error ? rc.data : [];
   // Mise à jour 6 : en cas d'erreur (script SQL pas encore lancé), on garde les valeurs précédentes
-  const [ab, np, pp] = await Promise.all([
-    sb.from('event_absences').select('event_id, occ_date, member_id').gte('occ_date', addDays(today(), -62)),
-    S.me ? sb.from('notif_prefs').select('*').eq('member_id', S.me.id).maybeSingle() : null,
-    sb.from('app_settings').select('value').eq('key', 'prayer_place').maybeSingle()
-  ]);
   if (!ab.error) S.absences = ab.data;
-  if (np && !np.error) { S.notifCh = np.data ? np.data.channels : ['annonces']; S.pinned = np.data?.pinned || []; }
+  if (!np.error) { S.notifCh = np.data ? np.data.channels : ['annonces']; S.pinned = np.data?.pinned || []; }
   if (!pp.error) S.prayerPlace = pp.data?.value?.lat != null ? pp.data.value : null;
-  loadThumbs();
+  loadThumbs(); saveSnap();
 }
 // Message clair quand une table de la mise à jour 6 manque encore dans Supabase
 const needSql = (e) => (['42P01', 'PGRST205', 'PGRST202', '42883'].includes(e?.code) ? new Error('lancez d\'abord la mise à jour SQL 06 dans Supabase') : e);
@@ -267,6 +289,7 @@ async function loadMessages(ch) {
   if (!rd.error) S.reads[ch] = Object.fromEntries(rd.data.map((x) => [x.member_id, x.read_at]));
   if (viewingChat() && S.chan === ch) markRead(ch);
   if (S.view === 'discussion' && S.chan === ch && (!had || sig() !== before)) patchChat(!had);
+  if (!had || sig() !== before) saveSnap();
 }
 function startRealtime() {
   if (S.realtime) return;
@@ -274,12 +297,14 @@ function startRealtime() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: m }) => {
       setOverview(m);
       if (m.member_id !== S.me?.id) {
+        clearTyping(m.channel, m.member_id);
         if (viewingChat() && S.chan === m.channel) markRead(m.channel);
-        else { S.unread[m.channel] = (S.unread[m.channel] || 0) + 1; paintBadges(); }
+        else { S.unread[m.channel] = (S.unread[m.channel] || 0) + 1; paintBadges(); inAppBanner(m); }
       }
-      paintConvList();
+      paintConvList(); saveSnap();
       const list = S.msgs[m.channel]; if (!list) return;
-      if (!list.some((x) => x.id === m.id)) list.push(m);
+      const tmp = list.findIndex((x) => x.pending && x.member_id === m.member_id && x.body === m.body);
+      if (list.some((x) => x.id === m.id)) { if (tmp >= 0) list.splice(tmp, 1); } else if (tmp >= 0) list[tmp] = m; else list.push(m);
       if (S.view === 'discussion' && S.chan === m.channel) patchChat();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
@@ -314,7 +339,53 @@ function startRealtime() {
       if (S.view === 'discussion' && S.chan === x.channel) patchChat();
     })
     .subscribe();
+  // « … écrit » : signal éphémère entre appareils, rien n'est enregistré
+  S.typingCh = sb.channel('typing', { config: { broadcast: { self: false } } })
+    .on('broadcast', { event: 'typing' }, ({ payload: p }) => onTyping(p))
+    .subscribe();
 }
+
+/* ---------- Dans l'appli : bannière au lieu d'une notification ---------- */
+let bannerTimer = null;
+function inAppBanner(m) {
+  if (document.hidden || !S.me || !seesChan(S.me, m.channel)) return;
+  const c = convOf(m.channel), a = member(m.member_id);
+  let b = $('#inbanner'); if (!b) { b = document.createElement('button'); b.id = 'inbanner'; b.type = 'button'; document.body.append(b); b.addEventListener('click', () => { b.classList.remove('on'); if (S.view !== 'discussion') go('discussion'); openConv(b.dataset.conv); }); }
+  b.dataset.conv = m.channel;
+  b.innerHTML = `${convAv(c, 'sm')}<span><b>${esc(c.dm ? c.name : c.name + ' · ' + (a ? a.first_name : ''))}</b><small>${esc(prevText(m))}</small></span>`;
+  b.classList.add('on'); navigator.vibrate?.(10);
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.classList.remove('on'), 4000);
+}
+
+/* ---------- « … écrit » / « … enregistre un vocal » ---------- */
+// Envoyé au plus toutes les 2,5 s pendant l'écriture ; affiché 5 s après le dernier signal
+S.typing = {};
+let typingLast = 0;
+function sendTyping(on, kind = 'text') {
+  if (!S.typingCh || !S.chan || !S.me) return;
+  if (on && Date.now() - typingLast < 2500 && S.typingSent === S.chan) return;
+  typingLast = on ? Date.now() : 0; S.typingSent = on ? S.chan : null;
+  S.typingCh.send({ type: 'broadcast', event: 'typing', payload: { ch: S.chan, id: S.me.id, on, kind } }).catch?.(() => {});
+}
+function onTyping(p) {
+  if (!p?.ch || p.id === S.me?.id || !seesChan(S.me, p.ch) || !member(p.id)) return;
+  const t = S.typing[p.ch] || (S.typing[p.ch] = {});
+  if (p.on) t[p.id] = { until: Date.now() + 5000, kind: p.kind }; else delete t[p.id];
+  paintTyping(p.ch);
+  setTimeout(() => paintTyping(p.ch), 5100);
+}
+function clearTyping(ch, id) { if (S.typing[ch]?.[id]) { delete S.typing[ch][id]; paintTyping(ch); } }
+// Qui écrit dans cette conversation (texte prêt à afficher), ou rien
+function typingText(ch, dm) {
+  const t = S.typing[ch]; if (!t) return '';
+  const now = Date.now(), who = Object.entries(t).filter(([, v]) => v.until > now);
+  if (!who.length) return '';
+  const rec = who.some(([, v]) => v.kind === 'rec'), verb = rec ? (who.length > 1 ? 'enregistrent un vocal' : 'enregistre un vocal') : who.length > 1 ? 'écrivent' : 'écrit';
+  if (dm) return verb === 'écrit' ? 'en train d\'écrire…' : verb + '…';
+  const names = who.map(([id]) => member(id)?.first_name).filter(Boolean);
+  return `${names.length > 2 ? names.slice(0, 2).join(', ') + '…' : names.join(' et ')} ${verb}…`;
+}
+function paintTyping(ch) { paintConvList(); if (S.chan === ch) paintConvHead(); }
 
 /* ---------- Messages non lus (bulle sur l'onglet Discussion) ---------- */
 const viewingChat = () => S.view === 'discussion' && !!S.chan && !document.hidden;
@@ -324,7 +395,7 @@ async function loadUnread() {
   const r = await sb.rpc('unread_counts'); if (r.error) return;
   const u = {}; r.data.forEach((x) => (u[x.channel] = Number(x.n)));
   if (viewingChat()) u[S.chan] = 0;
-  S.unread = u; paintBadges(); paintConvList();
+  S.unread = u; paintBadges(); paintConvList(); saveSnap();
 }
 const readTimers = {};
 function markRead(ch) {
@@ -363,8 +434,8 @@ async function refreshData() {
   loadVitrine(); loadUnread(); loadOverview();
   if (S.realtime && S.realtime.state !== 'joined' && S.realtime.state !== 'joining') { sb.removeChannel(S.realtime); S.realtime = null; }
   startRealtime();
-  // Les autres salons seront rechargés à leur ouverture ; celui affiché est rechargé tout de suite.
-  for (const ch in S.msgs) if (ch !== S.chan || S.view !== 'discussion') delete S.msgs[ch];
+  // Les conversations restent en mémoire (ouverture instantanée) ; celle affichée est rechargée tout de suite,
+  // les autres le seront en arrière-plan à leur ouverture.
   if (S.view === 'discussion' && S.chan) await loadMessages(S.chan);
   if (S.view === 'discussion') { paintConvList(); paintConvHead(); }
   const changed = before !== snap();
@@ -421,6 +492,12 @@ function touchPresence() {
   if (!S.me || document.hidden || Date.now() - lastTouch < 60000) return;
   lastTouch = Date.now(); sb.rpc('touch_presence').then(() => {}, () => {});
 }
+// Appli quittée ou mise en arrière-plan : les notifications reprennent tout de suite (mise à jour SQL 19)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden || !S.me) return;
+  lastTouch = 0; sb.rpc('touch_presence', { p_active: false }).then(() => {}, () => {});
+  if (S.typingSent) sendTyping(false);
+});
 checkVersion();
 
 /* ---------- Navigation ---------- */
@@ -453,7 +530,7 @@ function go(v) {
   if (v === 'discussion') {
     if (narrow()) S.chan = null; // sur téléphone, l'onglet s'ouvre sur la liste des conversations
     loadOverview();
-    if (S.chan) { if (!S.msgs[S.chan]) loadMessages(S.chan); else markRead(S.chan); }
+    if (S.chan) { if (S.msgs[S.chan]) markRead(S.chan); loadMessages(S.chan); }
   }
   render(); window.scrollTo(0, 0);
 }
@@ -1178,7 +1255,9 @@ let attFilling = false;
 async function fillAttLinks() {
   if (attFilling) return;
   const els = [...document.querySelectorAll('[data-attsrc]')].filter((el) => !el.getAttribute('src'));
-  const need = [...new Set(els.map((el) => el.dataset.attsrc))].filter((p) => !attUrl(p));
+  // Les liens des vocaux sont demandés d'avance : ▶ joue tout de suite, sans attendre le serveur
+  const voices = [...document.querySelectorAll('[data-voice]')].map((v) => v.dataset.voice);
+  const need = [...new Set([...els.map((el) => el.dataset.attsrc), ...voices])].filter((p) => !p.startsWith('local:') && !attUrl(p));
   attFilling = true;
   try {
     if (need.length) { const urls = await b2Links(need); for (const p in urls) S.attLinks[p] = { url: urls[p], at: Date.now() }; }
@@ -1196,23 +1275,28 @@ async function openAtt(path) {
     if (w) w.location = url; else location.href = url;
   } catch (e) { w?.close(); fail(e); }
 }
+// Fichier local affiché pendant l'envoi (photo, vidéo, vocal) : aucun téléchargement à attendre
+const LOCAL_KEEP = 1e13;
+function localPath(blob) { const p = 'local:' + (++tmpSeq); S.attLinks[p] = { url: URL.createObjectURL(blob), at: LOCAL_KEEP }; return p; }
+// Une fois envoyé, le fichier garde son aperçu local (plus besoin de le recharger depuis Backblaze)
+const keepLocal = (local, real) => { const l = S.attLinks[local]; if (l) S.attLinks[real] = { url: l.url, at: Date.now() }; };
 async function sendAttachment(f0) {
-  if (S.attBusy) return;
-  let f = await compressImage(f0);
+  const f = await compressImage(f0);
   if (f.size > ATT_MAX) return toast(/^video\//.test(f.type) ? 'Vidéo trop lourde (25 Mo maximum) : mettez-la sur YouTube en « non répertoriée » et collez le lien.' : 'Fichier trop lourd (25 Mo maximum).');
   const i = $('#msgIn'), caption = i?.value.trim() || '';
-  S.attBusy = true; paintAttBtn(); toast(`Envoi de ${f0.name}…`);
+  if (caption && i) { i.value = ''; growMsg(); syncCompose(); }
+  let w = null, h = null;
+  if (/^image\//.test(f.type)) { try { const b = await createImageBitmap(f); w = b.width; h = b.height; } catch (e) { /* dimensions facultatives */ } }
+  const name = f0.name.slice(0, 200), local = localPath(f);
+  const row = { body: caption || '📎 ' + name, attach_path: local, attach_name: name, attach_type: f.type || null, attach_size: f.size, attach_w: w, attach_h: h };
+  const tmp = addPending(row); tmp.uploading = true;
   try {
-    let w = null, h = null;
-    if (/^image\//.test(f.type)) { try { const b = await createImageBitmap(f); w = b.width; h = b.height; } catch (e) { /* dimensions facultatives */ } }
-    const safe = f.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'fichier';
+    const safe = f.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'fichier';
     const up = await filesFn(`?action=upload&name=${encodeURIComponent(safe)}`, f, f.type || 'application/octet-stream');
-    const name = f0.name.slice(0, 200);
-    const ok = await sendMessage({ body: caption || '📎 ' + name, attach_path: up.path, attach_name: name, attach_type: f.type || null, attach_size: up.size, attach_w: w, attach_h: h });
-    if (!ok) await removeFile(up.path);
-    else if (caption && i) { i.value = ''; growMsg(); }
-  } catch (e) { fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
-  S.attBusy = false; paintAttBtn();
+    keepLocal(local, up.path); tmp.uploading = false;
+    const ok = await sendMessage({ ...row, attach_path: up.path, attach_size: up.size }, tmp);
+    if (!ok) { await removeFile(up.path); if (caption && i && !i.value) { i.value = caption; growMsg(); syncCompose(); } }
+  } catch (e) { dropPending(tmp); fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
 }
 // Bouton « + » : chaque option
 function plusOption(k) {
@@ -1269,32 +1353,38 @@ function recMime() {
   for (const t of ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) if (window.MediaRecorder?.isTypeSupported?.(t)) return t;
   return '';
 }
+// Un seul « analyseur » audio, créé au premier appui puis réutilisé (pas d'attente aux appuis suivants)
+let recAC = null;
 async function startRec(e, btn) {
   if (S.rec) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("L'enregistrement vocal n'est pas possible sur cet appareil.");
-  togglePlus(false); closePicker(); $('#msgIn')?.blur();
-  const r = S.rec = { x0: e.clientX, y0: e.clientY, t0: 0, locked: false, up: false, chunks: [], peaks: [], pointer: e.pointerId };
+  const r = S.rec = { x0: e.clientX, y0: e.clientY, p0: Date.now(), t0: 0, locked: false, up: false, chunks: [], peaks: [], pointer: e.pointerId };
   try { btn.setPointerCapture(e.pointerId); } catch (err) { /* facultatif */ }
+  // Réaction immédiate : la barre rouge s'affiche avant même que le micro soit ouvert
+  togglePlus(false); closePicker(); $('#msgIn')?.blur();
+  const f = $('#compose'); f?.classList.add('recording'); sendTyping(true, 'rec');
+  const t = $('#recTime'), w = $('#recWave'); if (t) t.textContent = '0:00'; if (w) w.innerHTML = '';
+  navigator.vibrate?.(15);
+  try { const AC = window.AudioContext || window.webkitAudioContext; recAC = recAC || new AC(); recAC.resume?.().catch(() => {}); } catch (err) { recAC = null; }
+  r.tick = setInterval(recTick, 100);
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch (err) { S.rec = null; return toast(err.name === 'NotAllowedError' ? 'Autorisez le micro pour envoyer un message vocal.' : 'Micro indisponible.'); }
+  catch (err) { if (S.rec === r) cancelRec(); return toast(err.name === 'NotAllowedError' ? 'Autorisez le micro pour envoyer un message vocal.' : 'Micro indisponible.'); }
   if (S.rec !== r) { stream.getTracks().forEach((x) => x.stop()); return; }
   r.stream = stream;
+  // Bouton relâché pendant que le téléphone demandait l'accès au micro (première fois) : on n'enregistre pas
+  if (r.up && !r.locked) { cancelRec(); return toast('Micro autorisé : maintenez le bouton pour enregistrer, relâchez pour envoyer.'); }
   const mime = recMime();
   try { r.rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined); }
   catch (err) { r.rec = new MediaRecorder(stream); }
   r.rec.ondataavailable = (ev) => { if (ev.data.size) r.chunks.push(ev.data); };
   r.rec.start(250);
-  try { const AC = window.AudioContext || window.webkitAudioContext; r.ac = new AC(); r.ac.resume?.().catch(() => {}); r.an = r.ac.createAnalyser(); r.an.fftSize = 512; r.ac.createMediaStreamSource(stream).connect(r.an); r.buf = new Uint8Array(r.an.fftSize); } catch (err) { /* forme de la voix facultative */ }
+  try { r.src = recAC.createMediaStreamSource(stream); r.an = recAC.createAnalyser(); r.an.fftSize = 512; r.src.connect(r.an); r.buf = new Uint8Array(r.an.fftSize); } catch (err) { /* forme de la voix facultative */ }
   r.t0 = Date.now();
-  // Bouton relâché pendant que le téléphone demandait l'accès au micro : on n'enregistre pas
-  if (r.up) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
-  navigator.vibrate?.(15);
-  $('#compose')?.classList.add('recording');
-  r.tick = setInterval(recTick, 100); recTick();
 }
 function recTick() {
   const r = S.rec; if (!r?.t0) return;
+  if (Date.now() - typingLast > 2500) sendTyping(true, 'rec');
   let lvl = 0;
   if (r.an) { r.an.getByteTimeDomainData(r.buf); let sum = 0; for (const v of r.buf) sum += ((v - 128) / 128) ** 2; lvl = Math.sqrt(sum / r.buf.length); }
   r.peaks.push(lvl);
@@ -1304,9 +1394,9 @@ function recTick() {
   if (sec >= REC_MAX) stopRec(true);
 }
 function endRec(r) {
-  clearInterval(r.tick);
+  clearInterval(r.tick); sendTyping(false);
   r.stream?.getTracks().forEach((x) => x.stop());
-  r.ac?.close().catch(() => {});
+  try { r.src?.disconnect(); } catch (err) { /* déjà débranché */ }
   $('#compose')?.classList.remove('recording', 'locked');
 }
 function cancelRec() {
@@ -1331,17 +1421,20 @@ async function sendVoice(blob, dur, levels) {
   for (let i = 0; i < Math.min(n, levels.length); i++) { const part = levels.slice(Math.floor(i * step), Math.floor((i + 1) * step)); raw.push(part.reduce((a, b) => a + b, 0) / (part.length || 1)); }
   const top = Math.max(...raw, 0), flat = top < 0.005 || raw.length < 4; // voix non mesurée : forme par défaut à l'affichage
   const peaks = flat ? null : raw.map((v) => Math.round(10 + (v / top) * 90));
-  S.attBusy = true; paintAttBtn();
+  const local = localPath(blob);
+  const row = { body: `🎤 Message vocal (${fmtDur(Math.round(dur))})`, attach_path: local, attach_name: 'Message vocal', attach_type: type, attach_size: blob.size, attach_dur: Math.round(dur), voice_peaks: peaks };
+  const tmp = addPending(row); tmp.uploading = true;
   try {
     const up = await filesFn(`?action=upload&name=vocal.${ext}`, new File([blob], `vocal.${ext}`, { type }), type);
-    const ok = await sendMessage({ body: `🎤 Message vocal (${fmtDur(Math.round(dur))})`, attach_path: up.path, attach_name: 'Message vocal', attach_type: type, attach_size: up.size, attach_dur: Math.round(dur), voice_peaks: peaks });
+    keepLocal(local, up.path); tmp.uploading = false;
+    if (S.voice?.path === local) S.voice.path = up.path; // la lecture en cours continue
+    const ok = await sendMessage({ ...row, attach_path: up.path, attach_size: up.size }, tmp);
     if (!ok) await removeFile(up.path);
-  } catch (e) { fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
-  S.attBusy = false; paintAttBtn();
+  } catch (e) { dropPending(tmp); fail(e.absent ? new Error('stockage Backblaze indisponible : la fonction « files » est-elle installée ?') : e); }
 }
 root.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-mic]'); if (!b || e.button > 0) return; e.preventDefault(); startRec(e, b); });
 root.addEventListener('pointermove', (e) => {
-  const r = S.rec; if (!r?.t0 || r.locked || e.pointerId !== r.pointer) return;
+  const r = S.rec; if (!r || r.locked || e.pointerId !== r.pointer) return;
   const dx = e.clientX - r.x0, dy = e.clientY - r.y0, f = $('#compose');
   if (dx < -90) { cancelRec(); navigator.vibrate?.(30); return toast('Message vocal annulé'); }
   if (dy < -70) { r.locked = true; f?.classList.add('locked'); navigator.vibrate?.(15); return; }
@@ -1350,9 +1443,9 @@ root.addEventListener('pointermove', (e) => {
 const recRelease = (e) => {
   const r = S.rec; if (!r || e.pointerId !== r.pointer) return;
   r.up = true; $('#compose')?.style.removeProperty('--slide');
-  if (!r.t0 || r.locked) return;
-  if (Date.now() - r.t0 < 700) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
-  stopRec(true);
+  if (r.locked) return;
+  if (Date.now() - r.p0 < 500) { cancelRec(); return toast('Maintenez le micro pour enregistrer, relâchez pour envoyer.'); }
+  if (r.t0) stopRec(true); // sinon : le micro s'ouvre encore, startRec annulera
 };
 root.addEventListener('pointerup', recRelease);
 root.addEventListener('pointercancel', recRelease);
@@ -1548,9 +1641,9 @@ function msgsHtml() {
       ? `<img class="gifimg" src="${esc(m.gif_url)}" alt="GIF" loading="lazy" draggable="false" style="aspect-ratio:${m.gif_w || 200} / ${m.gif_h || 150}">`
       : poll ? pollHtml(m) : voice ? voiceHtml(m) : loc ? locHtml(m) : ev ? evCardHtml(m)
       : att ? attHtml(m) + (attOnly(m) ? '' : `<p>${bodyHtml(m)}</p>`) : `<p>${bodyHtml(m)}</p>`;
-    return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
+    return `${newDay ? `${i ? '</section>' : ''}<section class="day"><div class="daysep"><span>${esc(dayLabel(m.created_at))}</span></div>` : ''}<div class="msg${mine ? ' mine' : ''}${m.pending ? ' pending' : ''}${cont ? ' cont' : ''}${mentionsMe(m) ? ' tagme' : ''}" style="--k:${k}" data-mid="${m.id}">
       ${mine ? '' : `<div class="av">${esc(initial(a))}</div>`}<div class="b">${!mine && !cont ? `<div class="mwho">${esc(display(a))}</div>` : ''}
-      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}${att || card ? ' isatt' : ''}${voice ? ' isvoice' : ''}${media && attOnly(m) ? ' ismedia' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? ticksHtml(m) : ''}</time><button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button></div>
+      <div class="bubble${gif ? ' isgif' : ''}${poll ? ' ispoll' : ''}${att || card ? ' isatt' : ''}${voice ? ' isvoice' : ''}${media && attOnly(m) ? ' ismedia' : ''}">${quoteHtml(m)}${body}<time datetime="${esc(m.created_at)}">${hm(m.created_at)}${mine ? (m.pending ? `<span class="ticks pend" aria-label="${m.uploading ? 'Envoi du fichier' : 'Envoi'}…">🕓</span>` : ticksHtml(m)) : ''}</time>${m.pending ? '' : `<button class="mmore" data-mmenu="${m.id}" aria-label="Actions sur le message">${ico('down')}</button>`}</div>
       ${reactionsHtml(m)}</div><span class="swipeico" aria-hidden="true">↩</span></div>`;
   }).join('') + '</section>';
 }
@@ -1569,12 +1662,22 @@ const narrow = () => matchMedia('(max-width:860px)').matches;
 async function loadOverview() {
   if (!S.me) return;
   const r = await sb.rpc('chat_overview'); if (r.error) return;
+  const pend = Object.values(S.overview).filter((m) => m.pending);
   S.overview = Object.fromEntries(r.data.map((m) => [m.channel, m]));
-  paintConvList();
+  pend.forEach(setOverview);
+  paintConvList(); saveSnap(); prefetchConvs();
+}
+// Précharge les conversations du haut de la liste : elles s'ouvrent sans « Chargement… »
+let prefetching = false;
+async function prefetchConvs() {
+  if (prefetching || !S.me) return;
+  prefetching = true;
+  try { for (const c of convList().slice(0, 8)) if (!S.msgs[c.id] && S.overview[c.id]) await loadMessages(c.id); }
+  finally { prefetching = false; }
 }
 function setOverview(m) {
   const o = S.overview[m.channel];
-  if (!o || new Date(m.created_at) >= new Date(o.created_at)) S.overview[m.channel] = m;
+  if (!o || o.pending || new Date(m.created_at) >= new Date(o.created_at)) S.overview[m.channel] = m;
 }
 const fmtDur = (n) => `${Math.floor(n / 60)}:${String(Math.round(n % 60)).padStart(2, '0')}`;
 // « il y a » dans la liste : 5 min, 2 h, Hier, Lun., 12/10
@@ -1633,7 +1736,8 @@ function prevText(m) {
 function convRow(c) {
   const m = S.overview[c.id], n = S.unread[c.id] || 0, mine = m?.member_id === S.me.id;
   const who = !m ? '' : mine ? (c.dm ? `<span class="tick">${seenBy(m).seen.length ? '✓✓' : '✓'}</span> Vous : ` : '<b>Vous :</b> ') : c.dm ? '' : `<b>${esc(display(member(m.member_id)))} :</b> `;
-  const line = m ? who + esc(prevText(m)) : c.dm ? 'Nouvelle conversation' : 'Aucun message pour l\'instant';
+  const ty = typingText(c.id, c.dm);
+  const line = ty ? `<em class="typing">${esc(ty)}</em>` : m ? who + esc(prevText(m)) : c.dm ? 'Nouvelle conversation' : 'Aucun message pour l\'instant';
   return `<button class="convrow${n ? ' unread' : ''}" data-conv="${esc(c.id)}" data-cname="${esc(fold(c.name))}" data-kind="${c.dm ? 'dm' : 'chan'}" aria-current="${S.chan === c.id}">
     ${convAv(c)}<span class="cmain"><span class="ctop"><b>${esc(c.name)}</b>${m ? `<time>${relTime(m.created_at)}</time>` : ''}</span>
     <span class="cbot"><span>${line}</span>${S.pinned.includes(c.id) ? `<i class="cpin" aria-label="Épinglée">${ico('pin2', 15)}</i>` : ''}${n ? `<i class="cbadge">${fmtN(n)}</i>` : ''}</span></span></button>`;
@@ -1680,6 +1784,7 @@ function paintConvList() {
   if (chip) chip.innerHTML = 'Non lus' + (n ? `<em>${n}</em>` : '');
 }
 function convSub(c) {
+  const ty = typingText(c.id, c.dm); if (ty) return `<small class="typing">${esc(ty)}<i class="tdots"><i></i><i></i><i></i></i></small>`;
   if (c.dm) { const t = seenText(c.other); return t ? `<small class="${isOnline(c.other) ? 'ok' : ''}">${t}</small>` : `<small>${esc([grp(c.other?.group_id)?.name, poleNames(c.other || {})].filter(Boolean).join(' · '))}</small>`; }
   const who = S.members.filter((x) => seesChan(x, c.id));
   return `<small>${who.length} membre${who.length > 1 ? 's' : ''} · ${esc(who.slice(0, 4).map((x) => x.first_name).join(', '))}${who.length > 4 ? '…' : ''}</small>`;
@@ -1691,11 +1796,13 @@ function openConv(id) {
   const wasOpen = !!S.chan;
   S.chan = id; S.sheet = null; S.replyTo = null; S.plusOpen = false; closePicker();
   try { history[wasOpen ? 'replaceState' : 'pushState']({ conv: 1 }, '', '#chat-' + id); } catch (e) {}
-  if (!S.msgs[id]) loadMessages(id); else markRead(id);
+  if (S.msgs[id]) markRead(id);
+  loadMessages(id); // affichage immédiat depuis la mémoire, mise à jour discrète ensuite
   render();
 }
 function closeConv() {
   if (S.rec) cancelRec();
+  if (S.typingSent) sendTyping(false);
   S.chan = null; S.replyTo = null; S.plusOpen = false; closePicker(); stopVoice();
   try { history.replaceState(null, '', '#discussion'); } catch (e) {}
   render(); loadOverview();
@@ -1929,15 +2036,34 @@ function closePicker() {
   if (!['msgIn', 'gifQ'].includes(document.activeElement?.id)) document.documentElement.classList.remove('typing');
   const b = $('[data-pickertoggle]'); if (b) { b.innerHTML = '<span>GIF</span>'; b.setAttribute('aria-expanded', 'false'); }
 }
-async function sendMessage(row) {
-  const chan = S.chan, reply = S.replyTo;
-  const tags = row.gif_url ? [] : findMentions(row.body);
-  const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: reply?.id ?? null, ...(tags.length ? { mentions: tags } : {}), ...row }).select().single();
-  if (r.error) { fail((row.attach_dur != null || row.loc_lat != null || row.event_ref || isDmId(chan)) && (['PGRST204', '42703', '23514'].includes(r.error.code) || /row-level security/.test(r.error.message || '')) ? new Error("lancez d'abord la mise à jour SQL 17 dans Supabase") : row.attach_path && ['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 15 dans Supabase") : row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
-  if (reply && S.replyTo === reply) setReply(null);
-  const list = S.msgs[chan] || (S.msgs[chan] = []); if (!list.some((x) => x.id === r.data.id)) list.push(r.data);
-  setOverview(r.data); paintConvList();
+// Envoi sans attente : le message s'affiche tout de suite (🕓), puis prend sa place définitive quand le serveur répond
+let tmpSeq = 0;
+function addPending(row, chan = S.chan) {
+  const m = { channel: chan, member_id: S.me.id, reply_to: S.replyTo?.id ?? null, ...row, id: 'tmp' + (++tmpSeq), created_at: new Date().toISOString(), pending: true };
+  (S.msgs[chan] || (S.msgs[chan] = [])).push(m);
+  if (S.replyTo) setReply(null);
+  setOverview(m); paintConvList();
   if (S.chan === chan) patchChat(true);
+  return m;
+}
+function dropPending(m) {
+  const l = S.msgs[m.channel]; if (l) S.msgs[m.channel] = l.filter((x) => x !== m);
+  if (S.overview[m.channel] === m) loadOverview();
+  if (S.chan === m.channel) patchChat();
+}
+async function sendMessage(row, tmp) {
+  tmp = tmp || addPending(row);
+  Object.assign(tmp, row);
+  const chan = tmp.channel;
+  const tags = row.gif_url ? [] : findMentions(row.body);
+  const r = await sb.from('messages').insert({ channel: chan, member_id: S.me.id, reply_to: tmp.reply_to ?? null, ...(tags.length ? { mentions: tags } : {}), ...row }).select().single();
+  if (r.error) { dropPending(tmp); fail((row.attach_dur != null || row.loc_lat != null || row.event_ref || isDmId(chan)) && (['PGRST204', '42703', '23514'].includes(r.error.code) || /row-level security/.test(r.error.message || '')) ? new Error("lancez d'abord la mise à jour SQL 17 dans Supabase") : row.attach_path && ['PGRST204', '42703'].includes(r.error.code) ? new Error("lancez d'abord la mise à jour SQL 15 dans Supabase") : row.poll_options || tags.length ? needSql9(r.error) : needSql7(r.error)); return null; }
+  // Le message définitif remplace le provisoire (sauf si le temps réel l'a déjà fait)
+  const list = S.msgs[chan] || (S.msgs[chan] = []), i = list.indexOf(tmp);
+  if (list.some((x) => x.id === r.data.id)) { if (i >= 0) list.splice(i, 1); } else if (i >= 0) list[i] = r.data; else list.push(r.data);
+  if (S.overview[chan] === tmp) S.overview[chan] = r.data; else setOverview(r.data);
+  paintConvList();
+  if (S.chan === chan) patchChat();
   // Notifications : envoyées aux chefs qui suivent ce canal (choix fait avec la cloche)
   const n = await sb.functions.invoke('notify', { body: { action: 'notify', message_id: r.data.id } });
   if (chan === 'annonces') {
@@ -2703,7 +2829,7 @@ root.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (S.rec) return stopRec(true); // vocal verrouillé : la flèche l'envoie
     const v = $('#msgIn').value.trim(); if (!v) return;
-    $('#msgIn').value = ''; growMsg(); syncCompose(); S.mention = null; paintMentions();
+    $('#msgIn').value = ''; growMsg(); syncCompose(); S.mention = null; paintMentions(); sendTyping(false);
     if (!(await sendMessage({ body: v })) && $('#msgIn') && !$('#msgIn').value) { $('#msgIn').value = v; growMsg(); }
   }
   if (id === 'pollForm') { e.preventDefault(); return submitPoll(); }
@@ -2734,7 +2860,7 @@ root.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !touchScreen()) { e.preventDefault(); e.target.form.requestSubmit(); }
 });
 root.addEventListener('input', (e) => {
-  if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); syncCompose(); if (S.plusOpen) togglePlus(false); }
+  if (e.target.id === 'msgIn') { growMsg(); mentionCheck(); syncCompose(); if (S.plusOpen) togglePlus(false); if (e.target.value.trim()) sendTyping(true); else if (S.typingSent) sendTyping(false); }
   if (e.target.id === 'convQ') { S.convQ = e.target.value; paintConvList(); }
   if (e.target.id === 'dmQ') { const q = fold(e.target.value.trim()); document.querySelectorAll('.dmlist [data-dm]').forEach((b) => (b.hidden = !!q && !b.dataset.cname.includes(q))); }
   if (e.target.matches('[data-pollq], [data-pollopt]')) pollInput(e.target);
@@ -2811,26 +2937,33 @@ async function boot() {
   S.calDate = S.calSel = today();
   const { data } = await sb.auth.getSession();
   S.session = data.session;
+  let routed = false;
   if (S.session) {
+    const sn = readSnap(S.session.user.id);
+    if (sn) { applySnap(sn); if (S.me) { route(); routed = true; render(); } } // tout de suite, avec la dernière session
     try { await loadAll(); lastRefresh = Date.now(); } catch (e) { fail(e); }
     if (S.me) { startRealtime(); loadVitrine(); loadUnread(); }
   }
+  if (!routed) route();
+  if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
+  if (S.me) loadOverview();
+  if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
+  render();
+}
+// Page à ouvrir d'après l'adresse (#discussion, #chat-…, #annonces…)
+function route() {
   const h = decodeURIComponent((location.hash || '').slice(1)), hc = /^chat-([a-z]+|dm:[0-9a-f:-]+)$/.exec(h);
   if (h === 'annonces') { S.view = 'discussion'; S.chan = 'annonces'; }
   else if (h === 'prieres') { S.view = 'accueil'; S.sheet = 'prieres'; }
   else if (hc && seesChan(S.me, hc[1])) { S.view = 'discussion'; S.chan = hc[1]; }
   else if (/^[a-z]+$/.test(h) && h !== S.view && [...NAV.map((n) => n[0]), 'administration', 'reclamations'].includes(h)) S.view = h;
   if (h === 'discussion' && narrow()) S.chan = null; // sur téléphone : la liste des conversations
-  if (S.me) checkPush().then(() => { if (S.sheet === 'notif') render(); else paintBell(); });
-  if (S.me) loadOverview();
-  if (S.view === 'discussion' && S.me && S.chan) loadMessages(S.chan);
-  render();
 }
 sb.auth.onAuthStateChange((event, session) => {
   if (event === 'PASSWORD_RECOVERY') { authMode = 'newpass'; S.session = session; render(); return; }
   const changed = (session?.user?.id || null) !== (S.session?.user?.id || null);
   S.session = session;
-  if (event === 'SIGNED_OUT') { S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
+  if (event === 'SIGNED_OUT') { clearSnap(); S.me = null; S.msgs = {}; if (S.realtime) { sb.removeChannel(S.realtime); S.realtime = null; } authMode = 'login'; render(); return; }
   if (changed && session) setTimeout(boot, 0);
 });
 // Ouverture depuis une notification : #annonces ou #chat-<canal>

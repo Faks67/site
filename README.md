@@ -142,6 +142,16 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
 1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/18-conversations-epinglees.sql` et cliquer sur *Run*.
 2. Dans la Discussion : **appui long** (ou clic droit sur ordinateur) sur une conversation > *Épingler en haut*, ou bouton *Épingler* dans la fiche de la conversation (toucher l'en-tête). Jusqu'à 5 conversations épinglées, gardées sur tous les appareils de chaque chef.
 
+## Mise à jour 19 : pas de notification dans l'appli, « … écrit », appli plus fluide
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/19-presence-active.sql` et cliquer sur *Run*.
+2. **Fonction `notify`** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts`, puis *Deploy*. Elle n'envoie plus de notification aux chefs qui ont l'appli ouverte (ils voient une bannière en haut de l'écran à la place).
+3. Dans le site :
+   - **« … écrit » / « … enregistre un vocal »** dans l'en-tête de la conversation et dans la liste (signal éphémère, rien n'est enregistré).
+   - **Envoi instantané** : le message, la photo ou le vocal s'affiche tout de suite (🕓), puis ✓ quand le serveur l'a reçu.
+   - **Ouverture instantanée** : les conversations restent en mémoire et celles du haut de la liste sont préchargées ; au lancement, l'appli s'affiche aussitôt avec la dernière session (copie locale effacée à la déconnexion), puis se met à jour.
+   - **Vocaux** : la barre d'enregistrement apparaît dès l'appui, et ▶ joue tout de suite (liens préparés à l'avance).
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
