@@ -1176,14 +1176,14 @@ const attUrl = (path) => { const l = S.attLinks[path]; return l && Date.now() - 
 let attFilling = false;
 async function fillAttLinks() {
   if (attFilling) return;
-  const els = [...document.querySelectorAll('#msgs [data-attsrc]')].filter((el) => !el.getAttribute('src'));
+  const els = [...document.querySelectorAll('[data-attsrc]')].filter((el) => !el.getAttribute('src'));
   const need = [...new Set(els.map((el) => el.dataset.attsrc))].filter((p) => !attUrl(p));
   attFilling = true;
   try {
     if (need.length) { const urls = await b2Links(need); for (const p in urls) S.attLinks[p] = { url: urls[p], at: Date.now() }; }
   } catch (e) { /* aperçus facultatifs */ } finally { attFilling = false; }
   const box = $('#msgs'), near = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  document.querySelectorAll('#msgs [data-attsrc]').forEach((el) => { const u = attUrl(el.dataset.attsrc); if (u && !el.getAttribute('src')) el.setAttribute('src', u); });
+  document.querySelectorAll('[data-attsrc]').forEach((el) => { const u = attUrl(el.dataset.attsrc); if (u && !el.getAttribute('src')) el.setAttribute('src', u); });
   if (box && near) box.scrollTop = box.scrollHeight;
 }
 async function openAtt(path) {
@@ -1225,11 +1225,31 @@ function plusOption(k) {
 }
 function shareLocation() {
   if (!navigator.geolocation) return toast("La position n'est pas disponible sur cet appareil.");
-  toast('Recherche de votre position…');
-  navigator.geolocation.getCurrentPosition(
-    (p) => sendMessage({ body: '📍 Position partagée', loc_lat: p.coords.latitude, loc_lng: p.coords.longitude, loc_label: `Position de ${S.me.first_name}` }),
-    (err) => toast(err.code === 1 ? 'Autorisez la localisation pour partager votre position.' : 'Position introuvable, réessayez dehors ou avec le GPS activé.'),
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  const d = S.locDraft = { state: 'wait' }; S.sheet = 'loc'; render();
+  navigator.geolocation.getCurrentPosition(async (p) => {
+    if (S.locDraft !== d) return;
+    Object.assign(d, { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, state: 'ok' });
+    if (S.sheet === 'loc') render();
+    d.address = await reverseAddress(d.lat, d.lng);
+    if (S.locDraft === d && S.sheet === 'loc' && d.address) render();
+  }, (err) => {
+    if (S.locDraft !== d) return;
+    S.locDraft = null; if (S.sheet === 'loc') { S.sheet = null; render(); }
+    toast(err.code === 1 ? 'Autorisez la localisation pour partager votre position.' : 'Position introuvable, réessayez dehors ou avec le GPS activé.');
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+}
+// Adresse la plus proche (service gratuit de l'IGN, France uniquement)
+async function reverseAddress(lat, lng) {
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const r = await fetch(`https://data.geopf.fr/geocodage/reverse?lon=${lng}&lat=${lat}&limit=1&index=address`, { signal: ctrl.signal });
+    return r.ok ? (await r.json()).features?.[0]?.properties?.label || null : null;
+  } catch (e) { return null; } finally { clearTimeout(t); }
+}
+function sendLocation() {
+  const d = S.locDraft; if (!d || d.state !== 'ok') return;
+  S.locDraft = null; S.sheet = null; render();
+  return sendMessage({ body: '📍 ' + (d.address || 'Position partagée'), loc_lat: d.lat, loc_lng: d.lng, loc_label: d.address || `Position de ${S.me.first_name}` });
 }
 function shareEvent(id) {
   const e = S.events.find((x) => String(x.id) === id); if (!e) return;
@@ -1345,19 +1365,22 @@ const fold = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const taggable = (ch) => S.members.filter((x) => x.id !== S.me.id && seesChan(x, ch));
 const mentionRe = (m) => new RegExp('@' + escRe(m.first_name) + '(?![\\p{L}\\p{N}_-])', 'iu');
 const mentionsMe = (m) => m.member_id !== S.me.id && (m.mentions || []).includes(S.me.id);
+// Liens des messages : cliquables (et listés dans la fiche de la conversation)
+const URL_RE = /https?:\/\/[^\s<>"]+[^\s<>".,;:!?)\]]/g;
+const linkify = (html) => html.replace(URL_RE, (u) => `<a class="mlink" href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
 // Texte du message avec les @Prénom mentionnés mis en valeur
 function bodyHtml(m) {
   const ids = m.mentions || [];
   const names = ids.map(member).filter(Boolean).sort((a, b) => b.first_name.length - a.first_name.length);
-  if (!names.length) return esc(m.body);
+  if (!names.length) return linkify(esc(m.body));
   const re = new RegExp('@(' + names.map((x) => escRe(x.first_name)).join('|') + ')(?![\\p{L}\\p{N}_-])', 'giu');
   let out = '', last = 0;
   for (const hit of m.body.matchAll(re)) {
     const who = names.find((x) => fold(x.first_name) === fold(hit[1]));
-    out += esc(m.body.slice(last, hit.index)) + `<span class="tag${who?.id === S.me.id ? ' me' : ''}">${esc(hit[0])}</span>`;
+    out += linkify(esc(m.body.slice(last, hit.index))) + `<span class="tag${who?.id === S.me.id ? ' me' : ''}">${esc(hit[0])}</span>`;
     last = hit.index + hit[0].length;
   }
-  return out + esc(m.body.slice(last));
+  return out + linkify(esc(m.body.slice(last)));
 }
 // Pendant l'écriture : « @ » suivi du début d'un prénom propose les chefs du canal
 function mentionCheck() {
@@ -1639,7 +1662,7 @@ function convSub(c) {
   const who = S.members.filter((x) => seesChan(x, c.id));
   return `<small>${who.length} membre${who.length > 1 ? 's' : ''} · ${esc(who.slice(0, 4).map((x) => x.first_name).join(', '))}${who.length > 4 ? '…' : ''}</small>`;
 }
-const convHeadHtml = (c) => `<button class="convback" data-convback aria-label="Retour aux conversations">${ico('back')}</button>${convAv(c, 'sm')}<div class="convwho" id="convsub"><b>${esc(c.name)}</b>${convSub(c)}</div>`;
+const convHeadHtml = (c) => `<button class="convback" data-convback aria-label="Retour aux conversations">${ico('back')}</button><button class="convinfo-btn" data-convinfo aria-label="Infos de la conversation">${convAv(c, 'sm')}<span class="convwho" id="convsub"><b>${esc(c.name)}</b>${convSub(c)}</span></button>`;
 function paintConvHead() { const h = $('#convhead'); if (h && S.chan) h.innerHTML = convHeadHtml(convOf(S.chan)); }
 function openConv(id) {
   if (!seesChan(S.me, id)) return;
@@ -1709,6 +1732,60 @@ function newDmSheet() {
       return `<button class="convrow" data-dm="${x.id}" data-cname="${esc(fold(x.first_name + ' ' + display(x)))}">${convAv(c)}<span class="cmain"><span class="ctop"><b>${esc(display(x))}</b></span>
         <span class="cbot"><span class="gline"><i style="--k:${g?.color || 'var(--muted)'}"></i>${esc([g?.name, poleNames(x)].filter(Boolean).join(' · ') || ROLES[x.role] || '')}${x.user_id ? '' : ' · pas encore de compte'}</span></span></span></button>`; }).join('')}</div>
     <small class="hint">La conversation privée n'est visible que par vous deux.</small></div></div>`;
+}
+// Fiche d'une conversation (toucher l'en-tête) : la personne ou les membres, et ce qui a été partagé ces 30 derniers jours
+const INFO_DAYS = 30;
+function sharedOf(ch) {
+  const since = Date.now() - INFO_DAYS * 864e5, msgs = (S.msgs[ch] || []).filter((m) => new Date(m.created_at) >= since).slice().reverse();
+  const media = msgs.filter((m) => m.attach_path && ['img', 'vid'].includes(attKind(m)) && !/^audio\//.test(m.attach_type || ''));
+  const files = msgs.filter((m) => m.attach_path && attKind(m) === 'file' && !/^audio\//.test(m.attach_type || ''));
+  const links = []; msgs.forEach((m) => (m.body.match(URL_RE) || []).forEach((u) => { if (!links.some((l) => l.u === u)) links.push({ u, m }); }));
+  const places = msgs.filter((m) => m.loc_lat != null || m.event_ref);
+  return { media, files, links, places };
+}
+function sharedHtml(ch) {
+  const { media, files, links, places } = sharedOf(ch), who = (m) => esc(m.member_id === S.me.id ? 'Vous' : member(m.member_id)?.first_name || '');
+  const sec = (title, n, body, empty) => `<section class="isec"><h3>${title}${n ? ` <span class="count">${n}</span>` : ''}</h3>${n ? body : `<p class="hint">${empty}</p>`}</section>`;
+  return sec('Photos et vidéos', media.length, `<div class="igrid">${media.map((m) => `<button type="button" class="itile" data-attopen="${esc(m.attach_path)}" aria-label="${esc(m.attach_name)}">${attKind(m) === 'img'
+      ? `<img ${attUrl(m.attach_path) ? `src="${esc(attUrl(m.attach_path))}"` : ''} data-attsrc="${esc(m.attach_path)}" alt="" loading="lazy">` : `<span class="ivid">▶</span>`}</button>`).join('')}</div>`, 'Aucune photo ni vidéo ces 30 derniers jours.')
+    + sec('Documents', files.length, `<div class="ilist">${files.map((m) => `<button type="button" class="attfile" data-attopen="${esc(m.attach_path)}"><span class="ficon">${esc((m.attach_name.split('.').pop() || 'DOC').toUpperCase().slice(0, 4))}</span><span><b>${esc(m.attach_name)}</b><small>${who(m)} · ${relTime(m.created_at)}${m.attach_size ? ' · ' + fmtSize(m.attach_size) : ''}</small></span></button>`).join('')}</div>`, 'Aucun document ces 30 derniers jours.')
+    + sec('Liens', links.length, `<div class="ilist">${links.map(({ u, m }) => { let host = u; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch (e) { /* lien tel quel */ }
+      return `<a class="ilink" href="${esc(u)}" target="_blank" rel="noopener noreferrer"><span class="ficon">🔗</span><span><b>${esc(host)}</b><small>${esc(u)}</small><small>${who(m)} · ${relTime(m.created_at)}</small></span></a>`; }).join('')}</div>`, 'Aucun lien ces 30 derniers jours.')
+    + (places.length ? sec('Positions et événements', places.length, `<div class="ilist">${places.map((m) => m.loc_lat != null ? locHtml(m) : evCardHtml(m)).join('')}</div>`, '') : '');
+}
+function convInfoSheet() {
+  if (!S.chan) return '';
+  const c = convOf(S.chan);
+  let top;
+  if (c.dm) {
+    const o = c.other || {}, g = grp(o.group_id), t = seenText(o);
+    const line = (k, v) => v ? `<div class="irow"><span>${k}</span><b>${v}</b></div>` : '';
+    top = `<div class="ihead">${convAv(c, 'xl')}<h2>${esc(c.name)}</h2>${t ? `<small class="${isOnline(o) ? 'ok' : ''}">${t}</small>` : ''}</div>
+      <div class="irows">${line('Prénom', esc(o.first_name || ''))}${line('Groupe', g ? `<i class="gdot" style="--k:${g.color}"></i>${esc(g.name)}${g.age_range ? ` <small>(${esc(g.age_range)})</small>` : ''}` : 'Sans groupe')}
+        ${line(mPoles(o).length > 1 ? 'Pôles' : 'Pôle', esc(poleNames(o)) || 'Aucun')}${line('Rôle', esc(ROLES[o.role] || ''))}${o.is_admin ? line('Accès', 'Administrateur') : ''}</div>`;
+  } else {
+    const mem = S.members.filter((x) => seesChan(x, c.id)).sort((a, b) => (b.id === S.me.id) - (a.id === S.me.id) || isOnline(b) - isOnline(a) || a.first_name.localeCompare(b.first_name, 'fr'));
+    const p = pole(c.id);
+    top = `<div class="ihead">${convAv(c, 'xl')}<h2>${esc(c.name)}</h2><small>${c.announce ? "Annonces de l'unité" : p ? esc(p.name) : "Toute l'unité"} · ${mem.length} membre${mem.length > 1 ? 's' : ''}</small></div>
+      <section class="isec"><h3>Membres <span class="count">${mem.length}</span></h3><div class="ilist">${mem.map((x) => { const g = grp(x.group_id), me = x.id === S.me.id, xc = { dm: true, other: x, k: g?.color || 'var(--muted)', icon: esc(initial(x)) };
+        return `<button type="button" class="convrow" ${me ? 'disabled' : `data-dm="${x.id}"`}>${convAv(xc)}<span class="cmain"><span class="ctop"><b>${me ? 'Vous' : esc(display(x))}</b>${me ? '' : '<small class="ichat">Écrire ›</small>'}</span>
+          <span class="cbot"><span class="gline"><i style="--k:${g?.color || 'var(--muted)'}"></i>${esc([g?.name, poleNames(x)].filter(Boolean).join(' · ') || ROLES[x.role] || '')}</span></span></span></button>`; }).join('')}</div></section>`;
+  }
+  return `<div class="modal" data-closemodal><div class="card sheet infosheet" role="dialog" aria-modal="true" aria-label="Infos de la conversation">
+    <div class="row" style="justify-content:flex-end"><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    ${top}${sharedHtml(c.id)}
+    <small class="hint">Partagé dans cette conversation ces ${INFO_DAYS} derniers jours (les pièces jointes sont effacées au bout de 30 jours).</small></div></div>`;
+}
+// Position : on la montre (avec l'adresse) et on attend « Envoyer »
+function locSheet() {
+  const d = S.locDraft; if (!d) return '';
+  const body = d.state === 'wait' ? `<div class="locwait"><span class="locpin">${ico('pin')}</span><b>Recherche de votre position…</b><small>Autorisez la localisation si le téléphone le demande.</small></div>`
+    : `<div class="loccard big"><span class="locpin">${ico('pin')}</span><span class="locmain"><b>${esc(d.address || 'Position actuelle')}</b><small>${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}${d.acc ? ` · précision ± ${Math.round(d.acc)} m` : ''}</small>
+        <span class="row"><a class="btn small" href="https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lng}" target="_blank" rel="noopener">Vérifier sur la carte</a></span></span></div>`;
+  return `<div class="modal" data-closemodal><div class="card sheet" role="dialog" aria-modal="true" aria-labelledby="locTitle">
+    <div class="row" style="justify-content:space-between"><h2 id="locTitle">Envoyer ma position</h2><button class="btn small" data-closemodal aria-label="Fermer">✕</button></div>
+    ${body}
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-closemodal>Annuler</button><button class="btn primary" data-locsend ${d.state === 'wait' ? 'disabled' : ''}>${ico('send')} Envoyer</button></div></div></div>`;
 }
 // Partager un rendez-vous du calendrier
 function evPickSheet() {
@@ -2334,7 +2411,7 @@ function render() {
   const V = { presences: vPresences, reclamations: vRecl, localisation: vMap, accueil: vAccueil, organigramme: vOrg, poles: vPoles, groupes: vGroupes, bibliotheque: vBiblio, calendrier: vCal, discussion: vChat, administration: vAdmin };
   const active = document.activeElement?.id; const pos = document.activeElement?.selectionStart;
   const draft = $('#msgIn')?.value;
-  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
+  const sheet = S.view === 'calendrier' && S.evModal ? evModal() : S.sheet === 'notif' ? notifSheet() : S.sheet === 'newdm' ? newDmSheet() : S.sheet === 'evpick' ? evPickSheet() : S.sheet === 'convinfo' ? convInfoSheet() : S.sheet === 'loc' ? locSheet() : S.sheet?.startsWith('stat:') ? statSheet(S.sheet.slice(5)) : S.sheet === 'prieres' ? praySheet() : S.sheet === 'poll' ? pollSheet()
     : S.sheet?.startsWith('seen:') ? seenSheet(Number(S.sheet.slice(5))) : S.sheet?.startsWith('votes:') ? votesSheet(Number(S.sheet.slice(6))) : '';
   // Discussion : la page ne défile plus, seuls les messages défilent
   document.documentElement.classList.toggle('chatmode', S.view === 'discussion');
@@ -2413,7 +2490,7 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-mapidf]')) return mapInst?.flyTo({ ...IDF, speed: 1.6 });
   if (t.closest('[data-mapfr]')) return mapInst?.fitBounds([[-5.2, 41.3], [9.6, 51.1]], { padding: 30 });
   // Calendrier
-  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { if (S.sheet === 'poll') S.pollDraft = null; S.evModal = null; S.sheet = null; return render(); }
+  if (t.matches('[data-closemodal]') || t.closest('button[data-closemodal]')) { if (S.sheet === 'poll') S.pollDraft = null; if (S.sheet === 'loc') S.locDraft = null; S.evModal = null; S.sheet = null; return render(); }
   // Accueil, présences, notifications, canaux
   const st = t.closest('[data-stat]'); if (st) return statClick(st.dataset.stat);
   const sg = t.closest('[data-statgo]'); if (sg) return statGo(sg.dataset.statgo);
@@ -2459,6 +2536,8 @@ root.addEventListener('click', async (e) => {
   if (t.closest('[data-convback]')) { if (history.state?.conv) history.back(); else closeConv(); return; }
   const cfl = t.closest('[data-convfilter]'); if (cfl) { S.convFilter = cfl.dataset.convfilter; document.querySelectorAll('[data-convfilter]').forEach((b) => b.setAttribute('aria-selected', b === cfl)); return paintConvList(); }
   if (t.closest('[data-newdm]')) { S.sheet = 'newdm'; render(); return; }
+  if (t.closest('[data-convinfo]')) { $('#msgIn')?.blur(); S.sheet = 'convinfo'; render(); return; }
+  if (t.closest('[data-locsend]')) return sendLocation();
   const dmb = t.closest('[data-dm]'); if (dmb) { S.sheet = null; return openConv(dmId(S.me.id, dmb.dataset.dm)); }
   if (t.closest('[data-plus]')) { $('#msgIn')?.blur(); return togglePlus(); }
   const pls = t.closest('[data-plusopt]'); if (pls) return plusOption(pls.dataset.plusopt);
