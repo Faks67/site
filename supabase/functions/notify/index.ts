@@ -229,6 +229,19 @@ Deno.serve(async (req) => {
       } else subs = (await followers(admin, msg.channel, me.id)).filter((s) => !tagged.has(s.member_id));
       const active = await activeMembers(admin);
       subs = subs.filter((s) => !active.has(s.member_id)); tagSubs = tagSubs.filter((s) => !active.has(s.member_id));
+      // Appel (mise à jour SQL 23) : « Appel de … », qui reste affiché jusqu'à ce qu'on le touche
+      if (msg.call_id) {
+        const video = msg.body.startsWith('📹');
+        const sentCall = await sendAll(admin, subs, JSON.stringify({
+          title: `${video ? '📹' : '📞'} ${isDm ? `Appel de ${me.title} ${me.first_name}` : `Appel dans ${CHANNEL_NAMES[msg.channel] || msg.channel}`}`,
+          body: isDm ? 'Touchez pour répondre' : `${me.title} ${me.first_name} a lancé un appel ${video ? 'vidéo' : 'audio'} · touchez pour rejoindre`,
+          url: SITE_URL + '#chat-' + msg.channel,
+          tag: 'call-' + msg.call_id,
+          renotify: true,
+          requireInteraction: true
+        }));
+        return json({ sent: sentCall, total: subs.length });
+      }
       const sent = await sendAll(admin, subs, JSON.stringify({
         title: isDm ? `💬 ${me.title} ${me.first_name}` : isAnnonce ? `📣 ${me.title} ${me.first_name}` : `# ${CHANNEL_NAMES[msg.channel] || msg.channel} · ${me.title} ${me.first_name}`,
         body: short,

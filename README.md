@@ -172,6 +172,21 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - L'assistant connaît le calendrier des 60 prochains jours, les groupes et les pôles, seulement ce que le chef voit déjà. Il ne donne pas d'avis de fiqh et renvoie vers le responsable religieux.
    - Les conversations restent sur le téléphone (rien n'est enregistré dans la base). Avec la formule gratuite, Google peut utiliser les questions pour améliorer ses modèles : ne pas y mettre d'informations personnelles sur les enfants.
 
+## Mise à jour 23 : appels audio et vidéo
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/23-appels.sql` et cliquer sur *Run*.
+2. **Fonction `notify`** : *Edge Functions > notify > Code*, remplacer tout le code par le nouveau `supabase/functions/notify/index.ts`, puis *Deploy* (notification « 📹 Appel de… » qui reste affichée).
+3. **Relais Cloudflare (facultatif, conseillé)** : sans lui, environ 1 appel sur 10 peut ne pas se connecter sur certains réseaux (4G, box, entreprise).
+   - Créer un compte gratuit sur [dash.cloudflare.com](https://dash.cloudflare.com) (sans carte), puis *Realtime > TURN Server > Create* : noter le **Turn Token ID** et l'**API Token**.
+   - Supabase, *Edge Functions > Secrets* : `CF_TURN_KEY_ID` (Turn Token ID) et `CF_TURN_API_TOKEN` (API Token).
+   - *Edge Functions > Deploy a new function > Via Editor*, nom **`turn`**, coller `supabase/functions/turn/index.ts`, *Deploy*, **Verify JWT désactivé**.
+4. Dans le site :
+   - Boutons 📞 et 🎥 en haut de chaque conversation (sauf Annonces). En privé, l'autre chef voit un écran d'appel avec sonnerie (ou reçoit une notification si l'appli est fermée) : Refuser, Audio seul, Répondre.
+   - Dans un canal : appel de groupe, bandeau « Appel en cours · Rejoindre » et bouton dans l'historique ; jusqu'à 8 personnes en vidéo (au-delà, on rejoint caméra coupée).
+   - Pendant l'appel : micro, caméra (activable en cours d'appel), retourner la caméra (téléphone), partage d'écran avec le son (ordinateur, Chrome ou Edge), réactions, main levée, liste des membres, réduire l'appel pour continuer à utiliser l'appli, contour vert sur celui qui parle.
+   - Historique dans la conversation : appel vidéo/audio et durée, « Appel manqué · Rappeler », « Sans réponse ».
+   - Les images et le son passent directement d'un appareil à l'autre (WebRTC, chiffré) : rien n'est enregistré, la base ne garde que l'heure et la durée.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
