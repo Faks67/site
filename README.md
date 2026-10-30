@@ -215,7 +215,7 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
 ## Mise à jour 26 : appels stables
 
 1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/26-appels-stables.sql` et cliquer sur *Run* (après la 23).
-2. **Relais (conseillé pour les réseaux 4G difficiles)** : compte gratuit sur [metered.ca](https://www.metered.ca/tools/openrelay/), puis dans Supabase *Edge Functions > Secrets* : `METERED_DOMAIN` (ex. `monappli.metered.live`) et `METERED_API_KEY` ; créer ou mettre à jour la fonction **`turn`** avec `supabase/functions/turn/index.ts` (*Verify JWT* désactivé).
+2. **Relais (conseillé pour les réseaux 4G difficiles)** : compte gratuit sur [metered.ca](https://www.metered.ca/tools/openrelay/) (formule « Free · 20 GB »), *TURN Server & SFU > Credentials > Create credential*, puis dans Supabase *Edge Functions > Secrets* : `METERED_USERNAME` et `METERED_PASSWORD` (l'identifiant et le mot de passe affichés) ; créer ou mettre à jour la fonction **`turn`** avec `supabase/functions/turn/index.ts` (*Verify JWT* désactivé).
 3. Dans le site :
    - **Un seul appel par conversation**, garanti par la base : pendant un appel, l'en-tête affiche « Rejoindre » à la place de 📞 / 🎥, et lancer un appel rejoint celui en cours.
    - **Plus de coupures** : 5 fois moins de messages de connexion (Supabase gratuit coupait au-delà de 100 messages/s), connexions conservées pendant une coupure du canal temps réel, reconnexion et relance automatiques, signe de vie toutes les 15 s (un appel arrêté par erreur reprend).
