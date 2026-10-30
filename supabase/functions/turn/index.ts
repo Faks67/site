@@ -5,8 +5,9 @@
 //
 // À créer dans Supabase : Edge Functions > Deploy a new function > Via Editor,
 // nom « turn », coller ce fichier, puis Deploy. Laisser « Verify JWT » désactivé (la fonction vérifie elle-même).
-// Secrets à ajouter (Edge Functions > Secrets) : CF_TURN_KEY_ID et CF_TURN_API_TOKEN
-// (Cloudflare : Realtime > TURN Server > Create, compte gratuit sans carte bancaire).
+// Deux relais possibles (secrets à ajouter dans Edge Functions > Secrets) :
+// - Metered / Open Relay (compte gratuit sur metered.ca) : METERED_DOMAIN (ex. scouts.metered.live) et METERED_API_KEY ;
+// - Cloudflare (Realtime > TURN Server, demande une carte bancaire) : CF_TURN_KEY_ID et CF_TURN_API_TOKEN.
 
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 
@@ -25,6 +26,14 @@ Deno.serve(async (req) => {
     const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const { data: auth } = await admin.auth.getUser(token);
     if (!auth?.user) return json({ error: 'non connecté' }, 401);
+    // Metered / Open Relay
+    const mDomain = (Deno.env.get('METERED_DOMAIN') || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''), mKey = (Deno.env.get('METERED_API_KEY') || '').trim();
+    if (mDomain && mKey) {
+      const r = await fetch(`https://${mDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(mKey)}`);
+      const out = await r.json().catch(() => null);
+      if (r.ok && Array.isArray(out)) return json({ iceServers: out, ttl: 86400 });
+      console.error('Metered TURN', r.status, JSON.stringify(out).slice(0, 300));
+    }
     const keyId = (Deno.env.get('CF_TURN_KEY_ID') || '').trim(), apiToken = (Deno.env.get('CF_TURN_API_TOKEN') || '').trim();
     if (!keyId || !apiToken) return json({ iceServers: [] }); // pas de relais configuré
     const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`, {

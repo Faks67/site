@@ -212,6 +212,15 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
 1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/25-defi-confidentiel.sql` et cliquer sur *Run*.
 2. Dans l'onglet Défi, chaque chef voit seulement son propre nombre de bonnes réponses ; pour les autres, seuls les points apparaissent (et seuls les points sont envoyés au téléphone).
 
+## Mise à jour 26 : appels stables
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/26-appels-stables.sql` et cliquer sur *Run* (après la 23).
+2. **Relais (conseillé pour les réseaux 4G difficiles)** : compte gratuit sur [metered.ca](https://www.metered.ca/tools/openrelay/), puis dans Supabase *Edge Functions > Secrets* : `METERED_DOMAIN` (ex. `monappli.metered.live`) et `METERED_API_KEY` ; créer ou mettre à jour la fonction **`turn`** avec `supabase/functions/turn/index.ts` (*Verify JWT* désactivé).
+3. Dans le site :
+   - **Un seul appel par conversation**, garanti par la base : pendant un appel, l'en-tête affiche « Rejoindre » à la place de 📞 / 🎥, et lancer un appel rejoint celui en cours.
+   - **Plus de coupures** : 5 fois moins de messages de connexion (Supabase gratuit coupait au-delà de 100 messages/s), connexions conservées pendant une coupure du canal temps réel, reconnexion et relance automatiques, signe de vie toutes les 15 s (un appel arrêté par erreur reprend).
+   - **Groupes jusqu'à 8** : image plus petite (320 × 240, 15 images/s) au-delà de 5 personnes pour que les téléphones et la 4G tiennent ; le son reste prioritaire.
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
