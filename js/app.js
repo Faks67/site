@@ -2871,7 +2871,7 @@ function quizBoardHtml() {
   const av = (x, cls = '') => { const m = member(x.member_id); return `<span class="qzav ${cls}" style="--k:${grp(m?.group_id)?.color || 'var(--green)'}">${esc(initial(m))}</span>`; };
   const nm = (x) => (x.member_id === S.me.id ? 'Vous' : esc(member(x.member_id)?.first_name || 'Ancien membre'));
   const pod = [b[1], b[0], b[2]].map((x, i) => x ? `<div class="qzpod${i === 1 ? ' first' : ''}">${i === 1 ? '<span class="crown">👑</span>' : ''}${av(x)}<b>${nm(x)}</b><small>${fmtPts(x.points)}</small><div class="step s${[2, 1, 3][i]}">${[2, 1, 3][i]}</div></div>` : '<div></div>').join('');
-  return `<div class="qzpodium">${pod}</div><div class="qzrows">${b.slice(3).map((x, i) => `<div class="qzr${x.member_id === S.me.id ? ' me' : ''}"><span class="n">${i + 4}</span>${av(x)}<span class="nm">${x.member_id === S.me.id ? 'Vous' : esc(display(member(x.member_id)))}<small>${x.correct} bonne${x.correct > 1 ? 's' : ''} réponse${x.correct > 1 ? 's' : ''} sur ${x.answered}</small></span><span class="pt">${fmtPts(x.points)}</span></div>`).join('')}</div>`;
+  return `<div class="qzpodium">${pod}</div><div class="qzrows">${b.slice(3).map((x, i) => `<div class="qzr${x.member_id === S.me.id ? ' me' : ''}"><span class="n">${i + 4}</span>${av(x)}<span class="nm">${x.member_id === S.me.id ? 'Vous' : esc(display(member(x.member_id)))}${x.member_id === S.me.id && x.correct != null ? `<small>${x.correct} bonne${x.correct > 1 ? 's' : ''} réponse${x.correct > 1 ? 's' : ''} sur ${x.answered}</small>` : ''}</span><span class="pt">${fmtPts(x.points)}</span></div>`).join('')}</div>`;
 }
 function vDefi() {
   const z = S.quiz;
