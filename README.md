@@ -207,6 +207,11 @@ Le bouton 📎 de la discussion envoie une photo, une vidéo (25 Mo maximum), un
    - Appel privé sans réponse : la notification devient « 📵 Appel manqué ».
    - **Micro** : sur iPhone, le micro reste ouvert tant que la conversation est ouverte (plus de demande d'autorisation à chaque vocal), et l'appel réutilise ce micro. Il se ferme en quittant la conversation ou l'appli.
 
+## Mise à jour 25 (SQL) : Défi, bonnes réponses confidentielles
+
+1. **Base de données** : dans *SQL Editor > New query*, coller `supabase/25-defi-confidentiel.sql` et cliquer sur *Run*.
+2. Dans l'onglet Défi, chaque chef voit seulement son propre nombre de bonnes réponses ; pour les autres, seuls les points apparaissent (et seuls les points sont envoyés au téléphone).
+
 ## Organisation des fichiers
 
 | Fichier | Rôle |
