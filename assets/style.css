@@ -1401,3 +1401,5 @@ button,a,label,[role="button"],.convrow{-webkit-tap-highlight-color:transparent;
 .recpill.rv{background:var(--surface-2);border-color:var(--line);color:var(--green-ink);padding-left:4px}
 .recpill.rv .vplay{width:34px;height:34px}
 .voice.loading .vplay{animation:pulse .6s ease-in-out infinite alternate}
+.callbtn.joinnow{width:auto;border-radius:99px;padding:0 14px;gap:6px;display:inline-flex;align-items:center;background:var(--green);color:var(--on-green);font-weight:800;font-size:.85rem;animation:cupulse 1.6s ease infinite}
+.callbtn.joinnow span{white-space:nowrap}

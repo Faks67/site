@@ -3140,8 +3140,15 @@ function callJoinHtml(ch) {
   const mins = Math.floor((Date.now() - Date.parse(c.started_at)) / 60000);
   return `<div class="calljoin"><span class="pulse"></span><span class="cjt"><b>Appel ${c.kind === 'video' ? 'vidéo' : 'audio'} en cours${mins ? ' · ' + mins + ' min' : ''}</b><small>${esc(names.slice(0, 2).join(', '))}${names.length > 2 ? ` et ${names.length - 2} autre${names.length > 3 ? 's' : ''}` : ''}</small></span><button type="button" data-calljoin="${c.id}">Rejoindre</button></div>`;
 }
-function paintCallJoin() { const b = $('#calljoin'); if (b) b.innerHTML = callJoinHtml(S.chan); }
-const callBtnsHtml = (c) => (canCall(c.id) ? `<button class="callbtn" data-call="audio" aria-label="Appel audio">${svg(CI.phone, 20)}</button><button class="callbtn" data-call="video" aria-label="Appel vidéo">${svg(CI.cam, 20)}</button>` : '');
+function paintCallJoin() { const b = $('#calljoin'); if (b) b.innerHTML = callJoinHtml(S.chan); paintConvHead(); }
+function callBtnsHtml(c) {
+  if (!canCall(c.id)) return '';
+  const live = S.activeCalls[c.id];
+  // Un appel est déjà en cours dans cette conversation : on ne peut que le rejoindre
+  if (callLive(live) && CALL?.id !== live.id) return `<button class="callbtn joinnow" data-calljoin="${live.id}" aria-label="Rejoindre l'appel en cours">${svg(live.kind === 'video' ? CI.cam : CI.phone, 18)}<span>Rejoindre</span></button>`;
+  if (CALL?.channel === c.id) return `<button class="callbtn joinnow" data-callshow aria-label="Revenir à l'appel">${svg(CI.phone, 18)}<span>En appel</span></button>`;
+  return `<button class="callbtn" data-call="audio" aria-label="Appel audio">${svg(CI.phone, 20)}</button><button class="callbtn" data-call="video" aria-label="Appel vidéo">${svg(CI.cam, 20)}</button>`;
+}
 
 // ---------- Micro et caméra ----------
 // Voix : annulation d'écho, réduction du bruit, volume automatique, isolation de la voix quand l'appareil sait le faire
@@ -3250,21 +3257,16 @@ function callEnter(call, media, ice, opt) {
   releaseMic();
   if (recAC) { recAC.close().catch(() => {}); recAC = null; } // moteur audio des vocaux fermé : il gênerait l'annulation d'écho
   CALL = { id: call.id, channel: call.channel, kind: call.kind, dm: isDmId(call.channel), startedAt: Date.parse(call.started_at), since: null,
-    pid: crypto.randomUUID(), ice, peers: new Map(), pres: {}, early: {}, outgoing: !!opt.outgoing, hadPeer: false,
+    pid: crypto.randomUUID(), ice, peers: new Map(), pres: {}, known: {}, early: {}, waiting: new Set(), outgoing: !!opt.outgoing, hadPeer: false,
     mic: media.getAudioTracks()[0] || null, cam: media.getVideoTracks()[0] || null, scr: null, scrA: null,
     micOn: true, facing: 'user', hand: false, min: false, panel: null, els: {} };
   CALL.camOn = !!CALL.cam;
   callUi();
   try { navigator.wakeLock?.request('screen').then((w) => { if (CALL) CALL.wake = w; else w.release(); }, () => {}); } catch (e) { /* facultatif */ }
-  const ch = sb.channel('call-' + call.id, { config: { broadcast: { self: false }, presence: { key: CALL.pid } } });
-  ch.on('broadcast', { event: 'sig' }, ({ payload }) => onSig(payload))
-    .on('broadcast', { event: 'react' }, ({ payload }) => showReact(payload.e))
-    .on('broadcast', { event: 'end' }, () => { if (CALL?.dm) callHangup(false, 'Appel terminé'); })
-    .on('broadcast', { event: 'decline' }, () => { if (CALL?.dm && !CALL.hadPeer) callHangup(true, 'Appel refusé'); })
-    .on('presence', { event: 'sync' }, onPresence)
-    .subscribe((st) => { if (st === 'SUBSCRIBED' && CALL?.ch === ch) ch.track(myPres()); });
-  CALL.ch = ch;
-  CALL.ping = setInterval(() => sb.rpc('call_ping', { p_call: call.id }), 20000);
+  openCallChannel();
+  callPing();
+  CALL.ping = setInterval(callPing, 15000);
+  CALL.watch = setInterval(watchPeers, 2000);
   CALL.clock = setInterval(paintClock, 1000);
   if (CALL.outgoing) {
     CALL.stopTone = callTone('out');
@@ -3272,48 +3274,142 @@ function callEnter(call, media, ice, opt) {
   }
   if (S.view === 'discussion') { patchChat(); paintCallJoin(); }
 }
-const myPres = () => ({ mid: S.me.id, mic: CALL.micOn, cam: CALL.camOn, scr: !!CALL.scr, hand: CALL.hand });
-const sendPres = () => CALL?.ch?.track(myPres());
+// Signe de vie toutes les 15 s (et au retour dans l'appli) : l'appel ne se termine que si plus personne n'y est
+function callPing() { const c = CALL; if (c) sb.rpc('call_ping', { p_call: c.id }).then(() => {}, () => {}); }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !CALL) return;
+  callPing(); if (!CALL.chOk) openCallChannel();
+  CALL.peers.forEach((p) => { if (['failed', 'disconnected'].includes(p.pc.connectionState)) askRestart(p); });
+});
+// Canal temps réel de l'appel ; s'il se coupe (réseau, mise en veille), il se reconnecte tout seul sans couper l'image ni le son
+function openCallChannel() {
+  const c = CALL; if (!c) return;
+  if (c.ch) { const old = c.ch; c.ch = null; sb.removeChannel(old); }
+  const ch = sb.channel('call-' + c.id, { config: { broadcast: { self: false }, presence: { key: c.pid } } });
+  c.ch = ch; c.chOk = false;
+  ch.on('broadcast', { event: 'sig' }, ({ payload }) => onSig(payload))
+    .on('broadcast', { event: 'st' }, ({ payload }) => onState(payload))
+    .on('broadcast', { event: 'bye' }, ({ payload }) => { if (CALL === c && payload?.pid) { delete c.pres[payload.pid]; dropPeer(payload.pid); afterPeers(); } })
+    .on('broadcast', { event: 'react' }, ({ payload }) => showReact(payload.e))
+    .on('broadcast', { event: 'end' }, () => { if (CALL?.dm) callHangup(false, 'Appel terminé'); })
+    .on('broadcast', { event: 'decline' }, () => { if (CALL?.dm && !CALL.hadPeer) callHangup(true, 'Appel refusé'); })
+    .on('presence', { event: 'sync' }, onPresence)
+    .subscribe((st) => {
+      if (CALL !== c || c.ch !== ch) return;
+      if (st === 'SUBSCRIBED') { c.chOk = true; c.presAt = Date.now(); ch.track(myPres()); }
+      else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(st)) {
+        c.chOk = false; clearTimeout(c.reopen);
+        c.reopen = setTimeout(() => { if (CALL === c && !c.chOk) openCallChannel(); }, 1500 + Math.random() * 2000);
+      }
+    });
+}
+const myPres = () => ({ mid: S.me.id, mic: CALL.micOn, cam: CALL.camOn, scr: !!CALL.scr, hand: CALL.hand, at: Date.now() });
+// Micro, caméra, main levée : envoyés tout de suite à tous ; la « présence » n'est mise à jour qu'au plus toutes les 6,5 s (limite de Supabase)
+function sendPres() {
+  const c = CALL; if (!c?.ch) return;
+  c.ch.send({ type: 'broadcast', event: 'st', payload: { pid: c.pid, ...myPres() } });
+  clearTimeout(c.presT);
+  c.presT = setTimeout(() => { if (CALL === c && c.chOk) { c.presAt = Date.now(); c.ch.track(myPres()); } }, Math.max(0, (c.presAt || 0) + 6500 - Date.now()));
+}
+function onState(p) {
+  const c = CALL; if (!c || !p?.pid || p.pid === c.pid) return;
+  const cur = c.pres[p.pid] || c.known[p.pid];
+  if (cur && (cur.at || 0) > p.at) return;
+  c.known[p.pid] = { ...cur, ...p };
+  if (c.pres[p.pid]) c.pres[p.pid] = c.known[p.pid];
+  paintCall();
+}
 const sig = (to, data) => CALL?.ch?.send({ type: 'broadcast', event: 'sig', payload: { from: CALL.pid, to, ...data } });
 const localTrack = (i) => [CALL.mic, CALL.cam, CALL.scr, CALL.scrA][i] || null;
+// Participants : présents dans le canal, ou encore connectés en direct (un trou de réseau du canal ne fait partir personne)
+const callParts = () => { const c = CALL; const ids = new Set([...Object.keys(c.pres), ...c.peers.keys()]); return [...ids].map((pid) => [pid, c.pres[pid] || c.known[pid]]).filter(([, p]) => p?.mid); };
 function onPresence() {
-  if (!CALL) return;
-  const st = CALL.ch.presenceState(), pres = {};
-  for (const [k, arr] of Object.entries(st)) { const p = arr[arr.length - 1]; if (k !== CALL.pid && p?.mid) pres[k] = p; }
-  CALL.pres = pres;
-  const ids = Object.keys(pres);
-  // Pour chaque paire, celui dont l'identifiant est le plus grand ouvre la connexion (jamais les deux à la fois)
-  ids.forEach((pid) => { if (!CALL.peers.has(pid) && CALL.pid > pid) connectPeer(pid, true); });
-  [...CALL.peers.keys()].forEach((pid) => { if (!pres[pid]) dropPeer(pid); });
-  if (ids.length) {
-    if (!CALL.hadPeer) { CALL.hadPeer = true; CALL.since = Date.now(); CALL.stopTone?.(); clearTimeout(CALL.noAnswer); }
-    clearTimeout(CALL.alone);
-  } else if (CALL.dm && CALL.hadPeer) {
+  const c = CALL; if (!c) return;
+  const st = c.ch.presenceState(), pres = {};
+  for (const [k, arr] of Object.entries(st)) {
+    const p = arr[arr.length - 1]; if (k === c.pid || !p?.mid) continue;
+    const known = c.known[k]; pres[k] = known && (known.at || 0) > (p.at || 0) ? known : p; c.known[k] = pres[k];
+  }
+  c.pres = pres;
+  // Pour chaque paire, celui dont l'identifiant est le plus grand ouvre la connexion ; les ouvertures sont étalées
+  // pour ne pas envoyer trop de messages d'un coup quand beaucoup de monde arrive
+  let n = 0;
+  for (const pid of Object.keys(pres)) {
+    if (c.peers.has(pid) || c.waiting.has(pid) || c.pid < pid) continue;
+    c.waiting.add(pid);
+    setTimeout(() => { c.waiting.delete(pid); if (CALL === c && c.pres[pid] && !c.peers.has(pid)) connectPeer(pid, true); }, n++ * 400 + Math.random() * 400);
+  }
+  for (const [pid, p] of c.peers) p.goneAt = pres[pid] ? null : p.goneAt || Date.now();
+  afterPeers();
+}
+function afterPeers() {
+  const c = CALL; if (!c) return;
+  const others = callParts().length;
+  if (others) {
+    if (!c.hadPeer) { c.hadPeer = true; c.since = Date.now(); c.stopTone?.(); clearTimeout(c.noAnswer); }
+    clearTimeout(c.alone); c.alone = null;
+  } else if (c.dm && c.hadPeer && !c.alone) {
     // L'autre a quitté (ou perdu le réseau) : on attend un peu avant de raccrocher
-    clearTimeout(CALL.alone); CALL.alone = setTimeout(() => { if (CALL && !Object.keys(CALL.pres).length) callHangup(false, 'Appel terminé'); }, 10000);
+    c.alone = setTimeout(() => { if (CALL === c && !callParts().length) callHangup(false, 'Appel terminé'); }, 15000);
   }
   paintCall();
 }
+// Toutes les 2 s : connexions perdues relancées, personnes vraiment parties retirées
+function watchPeers() {
+  const c = CALL; if (!c) return;
+  let changed = false;
+  for (const [pid, p] of c.peers) {
+    const st = p.pc.connectionState;
+    if (st === 'connected') { p.badAt = null; p.tries = 0; }
+    else if (st === 'failed' || st === 'disconnected' || (st === 'connecting' && Date.now() - p.created > 12000)) {
+      p.badAt = p.badAt || Date.now();
+      if (st === 'failed' || Date.now() - p.badAt > 4000) askRestart(p);
+    }
+    // Absent du canal depuis 20 s et plus connecté : parti pour de bon
+    if (p.goneAt && Date.now() - p.goneAt > 20000 && st !== 'connected') { dropPeer(pid); changed = true; }
+  }
+  if (changed) afterPeers();
+}
+// Relance d'une connexion : celui qui l'a ouverte la refait ; l'autre le lui demande. Après 3 essais : connexion neuve.
+function askRestart(p) {
+  if (Date.now() - (p.restartAt || 0) < 8000) return;
+  p.restartAt = Date.now(); p.tries = (p.tries || 0) + 1;
+  if (!p.offerer) return sig(p.pid, { restart: 1 });
+  if (p.tries > 3) { const pid = p.pid; dropPeer(pid); if (CALL.pres[pid] || CALL.known[pid]) connectPeer(pid, true); return; }
+  restartPeer(p);
+}
+// L'adresse réseau complète est envoyée en un seul message (au lieu de dizaines de petits) : moins de trafic sur le canal
+function gathered(pc, ms = 2500) {
+  return new Promise((res) => {
+    if (pc.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, ms);
+    pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
+  });
+}
+async function sendDesc(p, desc, extra = {}) {
+  await p.pc.setLocalDescription(tuneSdp(desc));
+  await gathered(p.pc);
+  p.sentDesc = true;
+  sig(p.pid, { sdp: p.pc.localDescription.toJSON(), ...extra });
+}
 function connectPeer(pid, offerer) {
-  const pc = new RTCPeerConnection({ iceServers: CALL.ice });
-  const p = { pid, pc, cam: new MediaStream(), scr: new MediaStream(), ready: offerer, offerer };
-  CALL.peers.set(pid, p);
-  pc.onicecandidate = (e) => { if (e.candidate) sig(pid, { ice: e.candidate.toJSON() }); };
+  const c = CALL;
+  const pc = new RTCPeerConnection({ iceServers: c.ice, iceCandidatePoolSize: 2 });
+  const p = { pid, pc, cam: new MediaStream(), scr: new MediaStream(), ready: offerer, offerer, created: Date.now() };
+  c.peers.set(pid, p);
+  // Adresses trouvées après l'envoi (rare) : envoyées une par une
+  pc.onicecandidate = (e) => { if (e.candidate && p.sentDesc && c.peers.get(pid) === p) sig(pid, { ice: e.candidate.toJSON() }); };
   pc.ontrack = (e) => {
-    const i = pc.getTransceivers().indexOf(e.transceiver);
-    (i < 2 ? p.cam : p.scr).addTrack(e.track);
+    const i = pc.getTransceivers().indexOf(e.transceiver), s = i < 2 ? p.cam : p.scr;
+    s.getTracks().filter((t) => t.kind === e.track.kind).forEach((t) => s.removeTrack(t));
+    s.addTrack(e.track);
     e.track.onunmute = () => paintCall();
     paintCall();
   };
-  pc.onconnectionstatechange = () => {
-    if (!CALL) return;
-    if (pc.connectionState === 'connected') { tuneBitrates(); }
-    if (pc.connectionState === 'failed' && p.offerer) restartPeer(p);
-    paintCall();
-  };
+  pc.onconnectionstatechange = () => { if (CALL !== c || c.peers.get(pid) !== p) return; if (pc.connectionState === 'connected') tuneBitrates(); paintCall(); };
   if (offerer) {
     CALL_SLOTS.forEach((k, i) => pc.addTransceiver(localTrack(i) || k, { direction: 'sendrecv' }));
-    (async () => { try { await pc.setLocalDescription(tuneSdp(await pc.createOffer())); sig(pid, { sdp: pc.localDescription.toJSON() }); } catch (e) { console.error('offre', e); } })();
+    (async () => { try { await sendDesc(p, await pc.createOffer(), { fresh: 1 }); } catch (e) { console.error('offre', e); } })();
   }
   return p;
 }
@@ -3328,45 +3424,52 @@ function tuneSdp(d) {
   return { type: d.type, sdp };
 }
 async function restartPeer(p) {
-  try { p.pc.restartIce?.(); await p.pc.setLocalDescription(tuneSdp(await p.pc.createOffer({ iceRestart: true }))); sig(p.pid, { sdp: p.pc.localDescription.toJSON() }); } catch (e) { console.error('relance', e); }
+  try { p.pc.restartIce?.(); await sendDesc(p, await p.pc.createOffer({ iceRestart: true })); } catch (e) { console.error('relance', e); }
 }
 async function onSig(m) {
-  if (!CALL || m.to !== CALL.pid) return;
-  let p = CALL.peers.get(m.from);
+  const c = CALL;
+  if (!c || m.to !== c.pid) return;
+  let p = c.peers.get(m.from);
   try {
+    if (m.restart) { if (p?.offerer) { p.restartAt = 0; askRestart(p); } else if (!p && c.pid > m.from) connectPeer(m.from, true); return; }
     if (m.sdp?.type === 'offer') {
+      // Nouvelle connexion de l'autre (première fois, ou après une coupure) : on repart de zéro
+      if (p && m.fresh) { dropPeer(m.from); p = null; }
       if (!p) p = connectPeer(m.from, false);
       await p.pc.setRemoteDescription(m.sdp);
       if (!p.ready) { p.pc.getTransceivers().forEach((t, i) => { t.direction = 'sendrecv'; t.sender.replaceTrack(localTrack(i)); }); p.ready = true; }
-      await p.pc.setLocalDescription(tuneSdp(await p.pc.createAnswer()));
-      sig(m.from, { sdp: p.pc.localDescription.toJSON() });
-      for (const c of CALL.early[m.from] || []) await p.pc.addIceCandidate(c).catch(() => {});
-      delete CALL.early[m.from];
-    } else if (m.sdp?.type === 'answer' && p) {
+      await sendDesc(p, await p.pc.createAnswer());
+      for (const x of c.early[m.from] || []) await p.pc.addIceCandidate(x).catch(() => {});
+      delete c.early[m.from];
+    } else if (m.sdp?.type === 'answer' && p && p.pc.signalingState === 'have-local-offer') {
       await p.pc.setRemoteDescription(m.sdp);
-      for (const c of CALL.early[m.from] || []) await p.pc.addIceCandidate(c).catch(() => {});
-      delete CALL.early[m.from];
+      for (const x of c.early[m.from] || []) await p.pc.addIceCandidate(x).catch(() => {});
+      delete c.early[m.from];
     } else if (m.ice) {
       if (p?.pc.remoteDescription) await p.pc.addIceCandidate(m.ice).catch(() => {});
-      else (CALL.early[m.from] = CALL.early[m.from] || []).push(m.ice);
+      else (c.early[m.from] = c.early[m.from] || []).push(m.ice);
     }
   } catch (e) { console.error('signal', e); }
 }
 function dropPeer(pid) {
-  const p = CALL.peers.get(pid); if (!p) return;
+  const p = CALL?.peers.get(pid); if (!p) return;
   p.pc.close(); CALL.peers.delete(pid);
   Object.keys(CALL.els).filter((k) => k.startsWith(pid)).forEach((k) => { CALL.els[k].remove(); delete CALL.els[k]; });
 }
-// Qualité d'image adaptée au nombre de personnes (chacun envoie son image à tous les autres)
+// Qualité d'image adaptée au nombre de personnes : chacun envoie son image à tous les autres,
+// donc à 8 l'image est plus petite et moins fluide pour que le téléphone et la connexion tiennent
 function tuneBitrates() {
   if (!CALL) return;
-  // Le son passe toujours en premier : l'image baisse avant lui quand la connexion faiblit
-  const n = CALL.peers.size, cam = n <= 1 ? 800e3 : n <= 3 ? 350e3 : 200e3, scr = n <= 3 ? 1500e3 : 800e3;
+  const n = CALL.peers.size;
+  const cam = n <= 1 ? { b: 800e3, s: 1, f: 30 } : n <= 3 ? { b: 400e3, s: 1, f: 24 } : n <= 5 ? { b: 220e3, s: 1.5, f: 18 } : { b: 150e3, s: 2, f: 15 };
+  const scr = n <= 3 ? 1500e3 : 700e3;
   CALL.peers.forEach((p) => p.pc.getTransceivers().forEach((t, i) => {
     const prm = t.sender.getParameters(); if (!prm.encodings?.length) prm.encodings = [{}];
     const e = prm.encodings[0];
+    // Le son passe toujours en premier : l'image baisse avant lui quand la connexion faiblit
     if (i === 0 || i === 3) { e.maxBitrate = i === 0 ? 64e3 : 128e3; e.priority = 'high'; e.networkPriority = 'high'; }
-    else { e.maxBitrate = i === 1 ? cam : scr; e.priority = 'low'; e.networkPriority = 'low'; if (i === 1) prm.degradationPreference = 'balanced'; }
+    else if (i === 1) { Object.assign(e, { maxBitrate: cam.b, scaleResolutionDownBy: cam.s, maxFramerate: cam.f, priority: 'low', networkPriority: 'low' }); prm.degradationPreference = 'balanced'; }
+    else { Object.assign(e, { maxBitrate: scr, maxFramerate: 15, priority: 'low', networkPriority: 'low' }); }
     t.sender.setParameters(prm).catch(() => {});
   }));
 }
@@ -3374,12 +3477,13 @@ const replaceAll = (i, track) => CALL.peers.forEach((p) => { const t = p.pc.getT
 function callHangup(endForAll, msg) {
   if (!CALL) return;
   const c = CALL; CALL = null;
-  [c.ping, c.clock, c.vuTimer].forEach(clearInterval); [c.noAnswer, c.alone].forEach(clearTimeout); c.stopTone?.();
-  if (endForAll && c.dm) c.ch.send({ type: 'broadcast', event: 'end', payload: {} });
+  [c.ping, c.clock, c.vuTimer, c.watch].forEach(clearInterval); [c.noAnswer, c.alone, c.reopen, c.presT].forEach(clearTimeout); c.stopTone?.();
+  c.ch?.send({ type: 'broadcast', event: 'bye', payload: { pid: c.pid } });
+  if (endForAll && c.dm) c.ch?.send({ type: 'broadcast', event: 'end', payload: {} });
   c.peers.forEach((p) => p.pc.close());
   [c.mic, c.cam, c.scr, c.scrA].forEach((t) => t?.stop());
   try { c.wake?.release(); } catch (e) { /* facultatif */ }
-  setTimeout(() => sb.removeChannel(c.ch), 300);
+  setTimeout(() => { if (c.ch) sb.removeChannel(c.ch); }, 300);
   sb.rpc('call_leave', { p_call: c.id, p_end: !!(c.dm && endForAll) }).then(() => {
     loadActiveCalls();
     // Personne n'a décroché : la notification de l'autre devient « Appel manqué »
@@ -3396,7 +3500,7 @@ async function callCam() {
   if (!CALL) return;
   if (CALL.camOn) { CALL.cam?.stop(); CALL.cam = null; CALL.camOn = false; replaceAll(1, null); }
   else {
-    if (Object.keys(CALL.pres).length >= CALL_MAX_VIDEO) return toast(`${CALL_MAX_VIDEO} personnes maximum en vidéo.`);
+    if (callParts().length >= CALL_MAX_VIDEO) return toast(`${CALL_MAX_VIDEO} personnes maximum en vidéo.`);
     try { const s = await navigator.mediaDevices.getUserMedia({ video: CAM_OPTS(CALL.facing) }); if (!CALL) return s.getTracks().forEach((t) => t.stop()); CALL.cam = s.getVideoTracks()[0]; CALL.camOn = true; replaceAll(1, CALL.cam); tuneBitrates(); }
     catch (e) { return toast('Caméra indisponible.'); }
   }
@@ -3485,7 +3589,7 @@ function mediaEl(key, stream, kind, muted) {
 const hasVideo = (s) => s.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted);
 function paintCall() {
   const ui = $('#callui'); if (!ui || !CALL) return;
-  const peers = Object.entries(CALL.pres), conv = convOf(CALL.channel);
+  const peers = callParts(), conv = convOf(CALL.channel);
   const n = peers.length + 1;
   $('#cuWho').innerHTML = `<b>${esc(conv.name)}</b><small>${CALL.outgoing && !CALL.hadPeer ? 'Appel en cours…' : !peers.length ? "En attente d'autres participants…" : `${n} participant${n > 1 ? 's' : ''} · 🔒 chiffré`}</small>`;
   // Le son des autres : un lecteur audio caché par personne (les vidéos restent muettes)
@@ -3497,6 +3601,7 @@ function paintCall() {
   if (CALL.scr) screens.push({ key: 'me:s', name: 'Votre écran', stream: new MediaStream([CALL.scr]), mine: true });
   for (const [pid, pr] of peers) {
     const p = CALL.peers.get(pid), m = member(pr.mid);
+    if (p && !CALL.pres[pid] && p.pc.connectionState !== 'connected') continue; // parti, en attente de confirmation
     tiles.push({ key: pid, pid, name: m ? m.first_name : 'Chef', m, stream: p?.cam, cam: pr.cam && p && hasVideo(p.cam), mic: pr.mic, hand: pr.hand, state: p?.pc.connectionState });
     if (pr.scr && p && hasVideo(p.scr)) screens.push({ key: pid + ':s', name: 'Écran de ' + (m ? m.first_name : 'Chef'), stream: p.scr });
   }
@@ -3712,6 +3817,7 @@ root.addEventListener('click', async (e) => {
   // Appels
   const cl = t.closest('[data-call]'); if (cl) return callStart(cl.dataset.call);
   const cj = t.closest('[data-calljoin]'); if (cj) return callJoin(cj.dataset.calljoin);
+  if (t.closest('[data-callshow]')) return callMin(false);
   // Assistant
   const aisg = t.closest('[data-aisugg]'); if (aisg) return aiSend(aisg.dataset.aisugg);
   if (t.closest('[data-ainew]')) { if (S.aiBusy) return; S.ai = []; aiSave(); return paintAi(); }
